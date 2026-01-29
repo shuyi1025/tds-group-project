@@ -1,0 +1,6 @@
+"OriginalValue" "OriginalMeaning" "RecodedValue" "RecodedMeaning"
+"-2" "Do not drink hot drinks" "-2" "Do not drink hot drinks"
+"-3" "Prefer not to answer" "-3" "Prefer not to answer"
+"1" "Very hot" "1" "Very hot"
+"2" "Hot" "2" "Hot"
+"3" "Warm" "3" "Warm"

@@ -1,0 +1,5 @@
+"OriginalValue" "OriginalMeaning" "RecodedValue" "RecodedMeaning"
+"-3" "Prefer not to answer" "-3" "Prefer not to answer"
+"0" "No" "0" "No"
+"1" "Yes, because of illness" "1" "Yes, because of illness"
+"2" "Yes, because of other reasons" "2" "Yes, because of other reasons"
