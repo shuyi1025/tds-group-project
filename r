@@ -1,0 +1,20 @@
+cols <- sapply(ukb_cvd_2, function(x) is.character(x) || is.factor(x))
+
+library(data.table)
+chr_names <- names(ukb_cvd_2)[sapply(ukb_cvd_2, is.character)]
+ukb_cvd_2[, (chr_names) := lapply(.SD, function(x) { x[x == "Do not know"] <- NA; x }), .SDcols = chr_names]
+
+# character
+chr_names <- names(ukb_cvd_2)[sapply(ukb_cvd_2, is.character)]
+ukb_cvd_2[, (chr_names) := lapply(.SD, function(x) { x[x == "Do not know"] <- NA; x }), .SDcols = chr_names]
+
+fac_names <- names(ukb_cvd_2)[sapply(ukb_cvd_2, is.factor)]
+ukb_cvd_2[, (fac_names) := lapply(.SD, function(x) { x[as.character(x) == "Do not know"] <- NA; x }), .SDcols = fac_names]
+
+
+cols_with_dnk <- names(ukb_cvd_2)[
+  sapply(ukb_cvd_2, function(x) {
+    (is.character(x) || is.factor(x)) &&
+      any(as.character(x) == "Do not know", na.rm = TRUE)
+  })
+]
