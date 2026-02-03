@@ -20,7 +20,7 @@ cols_with_dnk <- names(ukb_cvd_2)[
 ]
 
 
-#missing rate calculation
+#'prefer not to answer' rate calculation
 pna_rate_nonNA <- sapply(ukb_cvd_2, function(x) {
   if (is.character(x) || is.factor(x)) {
     mean(as.character(x) == "Prefer not to answer", na.rm = TRUE)  
