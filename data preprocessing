@@ -63,3 +63,24 @@ saveRDS(
   merged_pna,
   file = "/rds/general/project/hda_25-26/live/TDS/TDS_Group8/extraction_and_recoding/merged_pna.rds"
 )
+
+
+#Step 1. Drop non-informative variables. 
+#First, drop variables that contain only “Prefer not to answer” and/or NA
+vars_drop <- merged_pna$column[
+  !is.na(merged_pna$pna_rate_among_nonmissing) &
+    merged_pna$pna_rate_among_nonmissing == 1
+]
+ukb_cvd_2[, (vars_drop) := NULL] #exclude 27 variables
+
+#Step 2. Recode very rare PNA as missing. 
+#For variables where pna_rate_overallN < 1%, we recode “Prefer not to answer” as NA. 
+vars_small_pna <- merged_pna$column[
+  !is.na(merged_pna$pna_rate_overallN) &
+    merged_pna$pna_rate_overallN < 0.01 & merged_pna$pna_rate_overallN > 0
+]
+vars_small_pna <- setdiff(vars_small_pna, vars_drop)
+ukb_cvd_2[, (vars_small_pna) := lapply(.SD, function(x) {
+  x[as.character(x) == "Prefer not to answer"] <- NA
+  x
+}), .SDcols = vars_small_pna]
