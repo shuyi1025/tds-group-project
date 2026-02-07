@@ -81,3 +81,18 @@ saveRDS(
   merged_pna,
   file = "/rds/general/project/hda_25-26/live/TDS/TDS_Group8/final_recode/pna_rate.rds"
 )
+
+#change pna to na in continuous variables
+ukb_new<-ukb
+char_cols <- names(ukb_new)[sapply(ukb_new, is.character)]
+
+ukb_new[char_cols] <- lapply(ukb_new[char_cols], function(x) {
+  x[x == "Prefer not to answer"] <- NA
+  suppressWarnings(as.numeric(x))
+})
+
+types_df <- data.frame(
+  variable = names(ukb_new),
+  class = sapply(ukb_new, function(x) paste(class(x), collapse = "/")),
+  stringsAsFactors = FALSE
+)
