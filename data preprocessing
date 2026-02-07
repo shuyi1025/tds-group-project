@@ -10,10 +10,21 @@ sum(sapply(ukb, function(x) {
   if (is.character(x)) sum(x == "Do not know", na.rm = TRUE) else 0
 }))
 
+types_df <- data.frame(
+  variable = names(ukb),
+  class = sapply(ukb, function(x) paste(class(x), collapse = "/")),
+  stringsAsFactors = FALSE
+)
 
+as.factor(ukb$cvd_event)
+
+saveRDS(
+  ukb,
+  file = "/rds/general/project/hda_25-26/live/TDS/TDS_Group8/final_recode/ukb.rds"
+)
 
 #'prefer not to answer' rate calculation
-pna_rate_nonNA <- sapply(ukb_cvd_2, function(x) {
+pna_rate_nonNA <- sapply(ukb, function(x) {
   if (is.character(x) || is.factor(x)) {
     mean(as.character(x) == "Prefer not to answer", na.rm = TRUE)  
   } else NA_real_
@@ -25,8 +36,8 @@ pna_nonNA <- data.frame(
 )
 
 
-N <- nrow(ukb_cvd_2)
-pna_rate <- sapply(ukb_cvd_2, function(x) {
+N <- nrow(ukb)
+pna_rate <- sapply(ukb, function(x) {
   if (is.character(x) || is.factor(x)) {
     sum(as.character(x) == "Prefer not to answer", na.rm = TRUE) / N
   } else {
@@ -51,28 +62,22 @@ merged_pna <- merge(
 
 names(merged_pna)[names(merged_pna) == "pna_rate_totalN"] <- "pna_rate_overallN"
 names(merged_pna)[names(merged_pna) == "pna_rate_nonNA"]  <- "pna_rate_among_nonmissing"
+
+na_rate <- colMeans(is.na(ukb))
+
+na_df <- data.frame(
+  column  = names(na_rate),
+  na_rate = as.numeric(na_rate),
+  row.names = NULL
+)
+na_df <- na_df[order(-na_df$na_rate), ]
+
+
+merged_pna <- within(merged_pna, {
+  pna_rate_overallN <- round(pna_rate_overallN, 3)
+  pna_rate_among_nonmissing <- round(pna_rate_among_nonmissing, 3)
+})
 saveRDS(
   merged_pna,
-  file = "/rds/general/project/hda_25-26/live/TDS/TDS_Group8/extraction_and_recoding/merged_pna.rds"
+  file = "/rds/general/project/hda_25-26/live/TDS/TDS_Group8/final_recode/pna_rate.rds"
 )
-
-
-#Step 1. Drop non-informative variables. 
-#First, drop variables that contain only “Prefer not to answer” and/or NA
-vars_drop <- merged_pna$column[
-  !is.na(merged_pna$pna_rate_among_nonmissing) &
-    merged_pna$pna_rate_among_nonmissing == 1
-]
-ukb_cvd_2[, (vars_drop) := NULL] #exclude 27 variables
-
-#Step 2. Recode very rare PNA as missing. 
-#For variables where pna_rate_overallN < 1%, we recode “Prefer not to answer” as NA. 
-vars_small_pna <- merged_pna$column[
-  !is.na(merged_pna$pna_rate_overallN) &
-    merged_pna$pna_rate_overallN < 0.01 & merged_pna$pna_rate_overallN > 0
-]
-vars_small_pna <- setdiff(vars_small_pna, vars_drop)
-ukb_cvd_2[, (vars_small_pna) := lapply(.SD, function(x) {
-  x[as.character(x) == "Prefer not to answer"] <- NA
-  x
-}), .SDcols = vars_small_pna]
