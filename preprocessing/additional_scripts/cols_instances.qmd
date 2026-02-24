@@ -1,0 +1,128 @@
+---
+title: "Multiple instances"
+format: html
+editor: visual
+---
+
+Load libraries
+
+```{r load libraries}
+library(dplyr)
+library(ggplot2)
+```
+
+Load data
+
+```{r}
+ukb_v2 <- readRDS("/rds/general/project/hda_25-26/live/TDS/TDS_Group8/final_recode/ukb_v2.rds")
+```
+
+# Method 1
+
+Keeping PNA and None of the Above answers then selecting latest incidence
+
+```{r Method 1}
+
+transport_cols <- grep("^ses_commute_transport_type\\.0\\.[1-4]$",
+  names(ukb_v2),
+  value = TRUE)
+
+# Ensure character (important if factors)
+ukb_v2[transport_cols] <- lapply(ukb_v2[transport_cols], as.character)
+
+ukb_drop <- ukb_v2 %>%
+  mutate(
+    any_prefer = if_any(all_of(transport_cols),
+                        ~ . == "Prefer not to answer"),
+    
+    any_none = if_any(all_of(transport_cols),
+                      ~ . == "None of the above"),
+    
+    ses_commute_transport = case_when(
+      any_prefer ~ "Prefer not to answer",
+      any_none ~ "None of the above",
+      TRUE ~ ses_commute_transport_type.0.3
+    )
+  ) %>%
+  select(-any_prefer, -any_none)
+```
+
+Distribution check for Method 1
+
+```{r dist Method 1}
+ggplot(ukb_drop, aes(x = ses_commute_transport)) +
+  geom_bar(fill = "purple") +
+  theme_minimal() +
+  labs(title = "Final Commute Transport Distribution",
+       x = "Transport",
+       y = "Count") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+# Method 2
+
+Keep None of the Above answer and take the latest instance for rows without None of the Above as final
+
+```{r Method 2}
+# create new version of transport cols for second method
+
+transport_cols_NA <- grep("^ses_commute_transport_type\\.0\\.[1-4]$",
+  names(ukb_v2),
+  value = TRUE)
+
+# Ensure character (important if factors)
+ukb_v2[transport_cols_NA] <- lapply(ukb_v2[transport_cols_NA], as.character)
+
+ukb_drop <- ukb_v2 %>%
+  mutate(any_none = if_any(all_of(transport_cols_NA),
+                      ~ . == "None of the above"),
+    
+    ses_commute_transport_NA = case_when(
+      any_none ~ "None of the above",
+      TRUE ~ ses_commute_transport_type.0.3
+    )
+  ) %>%
+  select(-any_none)
+```
+
+Distribution check for Method 2
+
+```{r dist Method 2}
+ggplot(ukb_drop, aes(x = ses_commute_transport_NA)) +
+  geom_bar(fill = "purple") +
+  theme_minimal() +
+  labs(title = "Final Commute Transport Distribution",
+       x = "Transport",
+       y = "Count") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+# Method 3
+
+Keep the latest instance
+
+```{r Method 3}
+
+transport_cols_latest <- grep("^ses_commute_transport_type\\.0\\.[1-4]$",
+                       names(ukb_v2),
+                       value = TRUE)
+
+ukb_drop <- ukb_v2 %>%
+  mutate(
+    ses_transport_type = ses_commute_transport_type.0.3
+  ) %>%
+  select(-setdiff(transport_cols, "ses_commute_transport_type.0.3"))
+
+```
+
+Distribution check for Method 3
+
+```{r dist Method 3}
+ggplot(ukb_drop, aes(x = ses_transport_type)) +
+  geom_bar(fill = "purple") +
+  theme_minimal() +
+  labs(title = "Final Commute Transport Distribution",
+       x = "Transport",
+       y = "Count") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```

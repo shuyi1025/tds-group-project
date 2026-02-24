@@ -1,0 +1,188 @@
+---
+title: "Distribution_Check"
+author: "Group_8"
+format: html
+editor: visual
+params:
+  field_ids: "24006,24004,24022,24003,24018,24017,24016,24503,24500,24504,24501,2000,1980,1990,20127,2010,1970,1950,2040,1920,1930,2020,1940,2030,2060,2080,2070,2050,1031,1960,2110,6160,971,981,874,914,924,991,1001,22036,22035,894,1011,1021,864,904,884"
+---
+
+Hi guys— the file is used to generate distribution plots for selected variables, and it also outputs the direct UKB Showcase link and the missingness rates for each variable.
+
+To use it, simply fill in the Field IDs in the `params:` section at the top of the file and render the document. Please make sure the required packages in the first code cell are installed before rendering. After rendering, open the generated **HTML file** to view the results.
+
+Currently, the script:
+
+-   Plots the distribution using **instance 0 and array 0**
+
+-   Calculates the **overall missingness for instance 0**
+
+-   Calculates the **missingness for each array/column** separately
+
+-   Calculates the **min and max for each variable**
+
+```{r}
+# Run the following once to install packages if you don't have them, then comment it out
+# install.packages(c("dplyr","tibble","ggplot2"), repos = "https://cloud.r-project.org")
+
+library(dplyr)
+library(tibble)
+library(ggplot2)
+```
+
+```{r results='asis'}
+OUT_DIR <- "/rds/general/project/hda_25-26/live/TDS/TDS_Group8"
+choices <- readRDS(file.path(OUT_DIR, "extraction_and_recoding/outputs/annot.rds"))
+dat     <- readRDS(file.path(OUT_DIR, "final_recode/ukb_v2.rds"))
+
+stopifnot(all(c("CodingName","FieldID","Link","Field") %in% colnames(choices)))
+
+make_link <- function(text, url) {
+  if (is.na(url) || url == "") return(text)
+  paste0("<a href='", url, "' target='_blank'>", text, "</a>")
+}
+
+# Instance=0 AND array=0 for distribution
+# else fallback to any baseline array, else first column.
+pick_plot_col <- function(cols) {
+  c00 <- cols[grepl("\\.0\\.0$", cols)]
+  if (length(c00) > 0) return(c00[1])
+
+  inst0 <- cols[grepl("\\.0\\.", cols)]
+  if (length(inst0) > 0) return(inst0[1])
+
+  cols[1]
+}
+
+plot_var <- function(x, var_label, max_n = 600000) {
+  if (length(x) > max_n) x <- sample(x, max_n)
+
+  if (is.numeric(x)) {
+    return(
+      ggplot(tibble(x = x), aes(x = x)) +
+        geom_histogram(bins = 40) +
+        labs(title = paste0(var_label, " (numeric)"), x = NULL, y = "Count")
+    )
+  }
+
+  xx <- as.character(x)
+  xx <- xx[!is.na(xx)]
+  if (length(xx) == 0) return(ggplot() + labs(title = paste0(var_label, " (all missing)")))
+
+  tab <- sort(table(xx), decreasing = TRUE)
+  top_k <- 20
+  if (length(tab) > top_k) {
+    keep <- names(tab)[1:top_k]
+    xx2 <- ifelse(xx %in% keep, xx, "Other")
+  } else {
+    xx2 <- xx
+  }
+
+  ggplot(tibble(x = xx2), aes(x = x)) +
+    geom_bar() +
+    coord_flip() +
+    labs(title = paste0(var_label, " (categorical)"), x = NULL, y = "Count")
+}
+
+# ---- parse requested FieldIDs ----
+req_raw <- unlist(strsplit(params$field_ids, "[,\\s]+"))
+req_raw <- req_raw[req_raw != ""]
+requested_fid <- unique(req_raw)
+
+# normalize FieldID type to character for matching
+choices$FieldID <- as.character(choices$FieldID)
+
+# map FieldID -> CodingName / Link
+fid_map <- choices |>
+  filter(!is.na(FieldID) & FieldID != "") |>
+  distinct(FieldID, .keep_all = TRUE) |>
+  select(FieldID, CodingName, Field, Link)
+
+# build meta mapping CodingName -> columns in dat
+meta <- tibble(col = colnames(dat)) |>
+  mutate(CodingName = sub("\\..*", "", col))
+
+available_coding <- unique(meta$CodingName)
+
+# check requested FieldIDs against annot
+found_map <- fid_map[fid_map$FieldID %in% requested_fid, , drop = FALSE]
+missing_fid_in_annot <- setdiff(requested_fid, fid_map$FieldID)
+
+cat("Requested FieldIDs: ", paste(requested_fid, collapse = ", "), "\n\n", sep = "")
+if (length(missing_fid_in_annot) > 0) {
+  cat("**Not found in annot (choices):** ", paste(missing_fid_in_annot, collapse = ", "), "\n\n", sep = "")
+}
+
+# among those found in annot, which have columns in dataset?
+found_map$in_dataset <- found_map$CodingName %in% available_coding
+missing_in_dataset <- found_map$FieldID[!found_map$in_dataset]
+
+if (length(missing_in_dataset) > 0) {
+  cat("**Found in annot but no columns in ukb_recoded.rds:** ",
+      paste(missing_in_dataset, collapse = ", "), "\n\n", sep = "")
+}
+
+use_map <- found_map[found_map$in_dataset, , drop = FALSE]
+n <- nrow(dat)
+
+# ---- iterate in the same order as user input ----
+for (fid in requested_fid) {
+  row <- use_map[use_map$FieldID == fid, , drop = FALSE]
+  if (nrow(row) == 0) next
+
+  v    <- row$CodingName[1]
+  fld  <- row$Field[1]
+  link <- row$Link[1]
+
+  cols <- meta$col[meta$CodingName == v]
+  if (length(cols) == 0) next
+
+cat("\n\n### FieldID ", fid, ": ", make_link(fld, link), "\n\n", sep = "")
+
+  # distribution: baseline+array0 first
+  plot_col <- pick_plot_col(cols)
+  
+  print(plot_var(dat[[plot_col]], var_label = paste0("Plotted from: ", plot_col)))
+
+  # column-level missingness
+  miss_cols <- tibble(
+    column = cols,
+    missing_n = sapply(cols, function(cc) sum(is.na(dat[[cc]]))),
+    missing_rate = missing_n / n
+  ) |>
+    arrange(desc(missing_rate))
+
+  # integrated missingness (any observed across all columns for this variable)
+  m <- dat[, cols, drop = FALSE]
+  missing_rate_any <- 1 - mean(rowSums(!is.na(m)) > 0)
+
+  cat("\n\n**Integrated missingness:** ",
+      sprintf("%.4f", missing_rate_any))
+  cat("\n")
+  cat("\n**Missingness by column:**\n", sep = "")
+  for (i in seq_len(nrow(miss_cols))) {
+    cat(" - ", miss_cols$column[i],
+        ": ", sprintf("%.4f", miss_cols$missing_rate[i]),
+        sep = "")
+  }
+  cat("\n")
+  
+# ---- overall min/max (pooled, baseline arrays) ----
+cols0 <- cols[grepl("\\.0\\.", cols)]
+if (length(cols0) == 0) cols0 <- cols
+
+pooled <- unlist(dat[, cols0, drop = FALSE], use.names = FALSE)
+x <- if (is.numeric(pooled)) pooled else suppressWarnings(as.numeric(as.character(pooled)))
+x_ok <- x[is.finite(x)]
+
+cat("\n**Overall min/max:**\n")
+if (length(x_ok) == 0) {
+  cat(" - all missing / non-numeric\n")
+} else {
+  cat(" - min: ", sprintf("%.6g", min(x_ok)), "\n", sep = "")
+  cat(" - max: ", sprintf("%.6g", max(x_ok)), "\n", sep = "")
+}
+cat("\n")
+
+}
+```

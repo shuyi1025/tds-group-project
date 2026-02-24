@@ -47,4 +47,14 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
-extraction_and_recoding/outputs/
+extraction_and_recoding/
+Data/
+final_recode/
+imputation/*.rds
+preprocessing/distribution_check/*.html
+preprocessing/distribution_check/*_files/
+**/.quarto/
+**/*_files/
+**/*.html
+**/*.pdf
+**/*.png
