@@ -34,8 +34,8 @@ library(stringr)
 Load data
 
 ```{r, data}
-ukb <- readRDS("/rds/general/project/hda_25-26/live/TDS/TDS_Group8/extraction_and_recoding/outputs/ukb_recoded.rds") #insert df path here 
-cvd_event <- readRDS("/rds/general/project/hda_25-26/live/TDS/TDS_Group8/Data/cvd_events.rds")
+ukb <- readRDS("../extraction_and_recoding/outputs/ukb_recoded.rds")
+cvd_event <- readRDS("cvd_events.rds")
 ```
 
 Addition of CVD_event, CVD_date and EID cols to data
@@ -102,14 +102,14 @@ table(ukb_v2$cvd_case)
 # Exclude washout cases
 ukb_v2 <- ukb_v2 %>%
   filter(cvd_case != "exclude_washout") %>%
-  select(-cvd_case)
+  dplyr::select(-cvd_case)
 
 table(ukb_v2$cvd_event)
 ```
 
-## PNA & IDK to NA conversion
+## 3) PNA & IDK to NA conversion
 
-Convert all O First check the number of PNA and IDKs throughout the entire dataset 
+Convert all O First check the number of PNA and IDKs throughout the entire dataset.
 
 ```{r, check}
 N <- nrow(ukb_v2)
@@ -316,50 +316,48 @@ ukb_v2 <- ukb_v2[, !grepl("qualification\\.0\\.[0-4]$", names(ukb_v2))]
 
 # remove manual bp cols
 
-ukb_v2 <- ukb_v2%>% 
-  select(-sbp_manual.0.0, -sbp_manual.0.1, -dbp_manual.0.0, -dbp_manual.0.1)
+ukb_v2 <- ukb_v2 %>% 
+  dplyr::select(-sbp_manual.0.0, -sbp_manual.0.1, -dbp_manual.0.0, -dbp_manual.0.1)
 
 # average sbp cols
-
 ukb_v2 <- ukb_v2 %>%
-  mutate(across(c(sbp_automated.0.0, sbp_automated.0.1), ~ {
-        x <- as.numeric(as.character(.))
-        x[x == 8242] <- NA
-        x
-      }
-    ),
-    sbp_avg = rowMeans(across(c(sbp_automated.0.0, sbp_automated.0.1)),na.rm = TRUE)) %>%
-  select(-sbp_automated.0.0, -sbp_automated.0.1)
+  dplyr::mutate(
+    dplyr::across(c(sbp_automated.0.0, sbp_automated.0.1), ~ {
+      x <- as.numeric(as.character(.))
+      x[x == 8242] <- NA
+      x
+    }),
+    sbp_avg = rowMeans(dplyr::across(c(sbp_automated.0.0, sbp_automated.0.1)), na.rm = TRUE)
+  ) %>%
+  dplyr::select(-sbp_automated.0.0, -sbp_automated.0.1)
 
 # average dbp cols
-
-ukb_v2 <- ukb_v2%>% 
-  mutate(dbp_avg = rowMeans(select(., dbp_automated.0.0, dbp_automated.0.1), na.rm = TRUE))%>%
-  select(-dbp_automated.0.0, -dbp_automated.0.1)
+ukb_v2 <- ukb_v2 %>% 
+  dplyr::mutate(
+    dbp_avg = rowMeans(dplyr::across(c(dbp_automated.0.0, dbp_automated.0.1)), na.rm = TRUE)
+  ) %>%
+  dplyr::select(-dbp_automated.0.0, -dbp_automated.0.1)
 
 # average fev1 and fvc cols
-
-ukb_v2 <- ukb_v2%>%
-  mutate(fev_avg = rowMeans(select(., fev1.0.0, fev1.0.1, fev1.0.2), na.rm = TRUE))%>%
-  mutate(across(c(fvc.0.0, fvc.0.1, fvc.0.2), ~ as.numeric(as.character(.)))) %>%
-  mutate(fvc_avg = rowMeans(select(., fvc.0.0, fvc.0.1, fvc.0.2), na.rm = TRUE))%>%
-  select(-fvc.0.0, -fvc.0.1, -fvc.0.2, -fev1.0.0, -fev1.0.1, -fev1.0.2)
+ukb_v2 <- ukb_v2 %>%
+  dplyr::mutate(
+    fev_avg = rowMeans(dplyr::across(c(fev1.0.0, fev1.0.1, fev1.0.2)), na.rm = TRUE),
+    dplyr::across(c(fvc.0.0, fvc.0.1, fvc.0.2), ~ as.numeric(as.character(.))),
+    fvc_avg = rowMeans(dplyr::across(c(fvc.0.0, fvc.0.1, fvc.0.2)), na.rm = TRUE)
+  ) %>%
+  dplyr::select(-fvc.0.0, -fvc.0.1, -fvc.0.2, -fev1.0.0, -fev1.0.1, -fev1.0.2)
 
 # drop data
-
-ukb_v2 <- ukb_v2%>%
-  select(-sleep_snore.1.0, -sleep_snore.2.0, -sleep_snore.3.0, -sleep_chronotype.1.0, -sleep_chronotype.2.0, -sleep_chronotype.3.0)
-
-# Due to synthetic data yob not being linked with mob and dob we do this manually here
-# SKIP THIS STEP FOR BIOBANK
-
-ukb_v2$mob <- month(ukb_v2$dob.0.0, label = TRUE)
-ukb_v2$yob <- year(ukb_v2$dob.0.0)
+ukb_v2 <- ukb_v2 %>%
+  dplyr::select(
+    -sleep_snore.1.0, -sleep_snore.2.0, -sleep_snore.3.0,
+    -sleep_chronotype.1.0, -sleep_chronotype.2.0, -sleep_chronotype.3.0
+  )
 
 # remove synthetic mob and yob <- DO NOT DO THIS IN BIOBANK
 
 ukb_v2 <- ukb_v2%>% 
-  select(-yob.0.0, -mob.0.0)
+  dplyr::select(-yob.0.0, -mob.0.0)
 
 # Extra date of death col needs to be removed
 
@@ -506,7 +504,7 @@ ukb_v3$ses_household_income_before_tax_avg.0.0[ukb_v3$ses_accom_type.0.0 %in% c(
 
 ```
 
-## 8) IMD tertiles
+## 9) IMD tertiles
 
 ```{r, imd}
 
@@ -565,7 +563,7 @@ process_imd <- function(df) {
     )
   
   df <- df%>%
-    select(-uk_country, -imd_raw, -imd_tertile, -ses_imd_england.0.0, -ses_imd_scotland.0.0, -ses_imd_wales.0.0)
+    dplyr::select(-uk_country, -imd_raw, -imd_tertile, -ses_imd_england.0.0, -ses_imd_scotland.0.0, -ses_imd_wales.0.0)
   
   return(df)
 }
@@ -575,7 +573,7 @@ ukb_v3 <- process_imd(ukb_v3)
 
 ```
 
-## 9) Missingness checks
+## 10) Missingness checks
 
 ```{r, missingness}
 
@@ -630,7 +628,7 @@ hist(row_missing_rate, breaks = 50)
 
 ```
 
-## 10) Excluding vars
+## 11) Excluding vars
 
 Vars have been excluded based on their level of missingness in the UK Biobank
 
@@ -639,7 +637,7 @@ Vars have been excluded based on their level of missingness in the UK Biobank
 ```{r, exc}
 
 ukb_v3 <- ukb_v3%>%
-  select(-phys_MET_week.0.0, -starts_with("smoke_age"), 
+  dplyr::select(-phys_MET_week.0.0, -starts_with("smoke_age"), 
          -starts_with("smoke_tobacco_type_"), -diet_carb.0.0, -diet_energy.0.0, -diet_fat.0.0,
          -diet_food_weight.0.0, -diet_polyunsat_fat.0.0, -diet_protein.0.0, -diet_sat_fat.0.0,
          -diet_total_sugar.0.0, -sleep_wake_early.0.0, -sleep_too_much.0.0, 
@@ -648,7 +646,7 @@ ukb_v3 <- ukb_v3%>%
          -smoke_tobacco_exposure_outside.0.0)
 
 ukb_v2 <- ukb_v2%>%
-  select(-phys_MET_week.0.0, -starts_with("smoke_age"), 
+  dplyr::select(-phys_MET_week.0.0, -starts_with("smoke_age"), 
          -starts_with("smoke_tobacco_type_"), -diet_carb.0.0, -diet_energy.0.0, -diet_fat.0.0,
          -diet_food_weight.0.0, -diet_polyunsat_fat.0.0, -diet_protein.0.0, -diet_sat_fat.0.0,
          -diet_total_sugar.0.0, -sleep_wake_early.0.0, -sleep_too_much.0.0, 
@@ -658,19 +656,21 @@ ukb_v2 <- ukb_v2%>%
 
 ```
 
-## 11) Imputation
+## 12) Imputation
 
-For imputation please submit the job /rds/general/project/hda_25-26/live/TDS/TDS_Group8/imputation/scripts/imputation_script/impute_ah.sh
+For imputation, run the corresponding imputation script in `pipeline_scripts/`.
 
-This will split the dataset into train and test and run imputation on train, using trained forests to impute test set.
+This step splits the dataset into training and test sets, fits the imputation model on the training data, and applies the trained model to the test data.
 
-Imputed datasets can be found in: /rds/general/project/hda_25-26/live/TDS/TDS_Group8/imputation/imputed_df
+Imputed datasets are saved to the designated output directory.
 
 ##### Save
 
 ```{r, save}
-saveRDS(ukb_v2, file = "/rds/general/project/hda_25-26/live/TDS/TDS_Group8/imputation/imputed_df/raw/ukb_raw.rds")
+output_dir <- "../pipeline_outputs"
+dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 
-saveRDS(ukb_v3, file = "/rds/general/project/hda_25-26/live/TDS/TDS_Group8/imputation/imputed_df/raw/ukb_skip.rds")
+saveRDS(ukb_v2, file = file.path(output_dir, "ukb_raw.rds"))
+saveRDS(ukb_v3, file = file.path(output_dir, "ukb_skip.rds"))
 
 ```
