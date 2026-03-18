@@ -1,0 +1,676 @@
+---
+title: "Preprocessing"
+author: "Group_8"
+date: "2026-03-01"
+output: html_document
+---
+
+# Workflow overview:
+
+0)  Setup
+1)  Distribution checks
+2)  Exclusion of individuals with CVD before baseline
+3)  Conversion of "Do not know" (IDK) and "Prefer not to answer" (PNA) to NA
+4)  Reclassify ethnicity
+5)  Removal of outliers
+6)  Instance selection
+7)  Merging/dropping of variables
+8)  Skip logic
+9)  IMD tertiles
+10) Missingness checks
+11) Vars exclusion
+12) Imputation
+
+## 0) Setup
+
+Load all necessary libraries
+
+```{r, libraries}
+library(dplyr)
+library(lubridate)
+library(stringr)
+```
+
+Load data
+
+```{r, data}
+ukb <- readRDS("/rds/general/project/hda_25-26/live/TDS/TDS_Group8/extraction_and_recoding/outputs/ukb_recoded.rds") #insert df path here 
+cvd_event <- readRDS("/rds/general/project/hda_25-26/live/TDS/TDS_Group8/Data/cvd_events.rds")
+```
+
+Addition of CVD_event, CVD_date and EID cols to data
+
+```{r, prelim}
+
+# add eid column
+ukb$eid <- rownames(ukb)
+rownames(ukb) <- NULL
+ukb$eid <- as.character(ukb$eid)
+
+cvd_event$eid <- as.character(cvd_event$eid)
+
+# cvd event flag
+cvd_ids <- unique(cvd_event$eid)
+ukb$cvd_event <- as.integer(ukb$eid %in% cvd_ids)
+
+# first cvd date 
+first_cvd <- aggregate(date ~ eid, cvd_event, min)
+
+ukb$cvd_date <- first_cvd$date[match(ukb$eid, first_cvd$eid)]
+
+# reorder columns
+first_cols <- c("eid", "cvd_event", "cvd_date")
+other_cols <- setdiff(names(ukb), first_cols)
+other_cols_sorted <- sort(other_cols)
+new_order <- c(first_cols, other_cols_sorted)
+ukb <- ukb[, new_order]
+
+# check binary
+table(ukb$cvd_event, useNA = "ifany")
+```
+
+## 1) Distribution checks
+
+Distribution checks are ran on the dataset before any changes. /rds/general/project/hda_25-26/live/TDS/TDS_Group8/preprocessing/distribution_check/dis_full.html - contains all the distribution checks of this dataset at baseline.
+
+## 2) Exclusion
+
+Exclude individuals with CVD_event before recruitment
+
+*Included a 1 year wash out period*
+
+```{r, exclusion}
+
+ukb_v2 <- ukb %>%
+  mutate(
+    date_recr.0.0 = as.Date(date_recr.0.0),
+    cvd_date      = as.Date(cvd_date),
+    
+    cvd_case = case_when(
+      !is.na(cvd_date) &
+        cvd_date <= date_recr.0.0 + years(1) ~ "exclude_washout",
+      
+      !is.na(cvd_date) &
+        cvd_date > date_recr.0.0 + years(1) ~ "incident",
+      
+      TRUE ~ "no_event"
+    )
+  )
+
+table(ukb_v2$cvd_case)
+
+# Exclude washout cases
+ukb_v2 <- ukb_v2 %>%
+  filter(cvd_case != "exclude_washout") %>%
+  select(-cvd_case)
+
+table(ukb_v2$cvd_event)
+```
+
+## PNA & IDK to NA conversion
+
+Convert all O First check the number of PNA and IDKs throughout the entire dataset 
+
+```{r, check}
+N <- nrow(ukb_v2)
+
+# Helper function to compute rates
+compute_rate <- function(df, target_string) {
+  # Rate among non-NA
+  rate_nonNA <- sapply(df, function(x) {
+    if (is.character(x) || is.factor(x)) {
+      mean(as.character(x) == target_string, na.rm = TRUE)
+    } else NA_real_
+  })
+  
+  df_nonNA <- data.frame(
+    column = names(rate_nonNA),
+    rate_nonNA = as.numeric(rate_nonNA),
+    row.names = NULL
+  )
+  
+  # Rate over total rows
+  rate_total <- sapply(df, function(x) {
+    if (is.character(x) || is.factor(x)) {
+      sum(as.character(x) == target_string, na.rm = TRUE) / N
+    } else NA_real_
+  })
+  
+  df_total <- data.frame(
+    column = names(rate_total),
+    rate_total = as.numeric(rate_total),
+    row.names = NULL
+  )
+  
+  merged <- merge(
+    df_total,
+    df_nonNA,
+    by = "column",
+    all = TRUE,
+    suffixes = c("_overall", "_nonNA")
+  )
+  
+  names(merged)[names(merged) == "rate_total"] <- paste0(target_string, "_rate_overallN")
+  names(merged)[names(merged) == "rate_nonNA"] <- paste0(target_string, "_rate_among_nonmissing")
+  
+  merged
+}
+
+# Compute PNA rates
+pna_table <- compute_rate(ukb_v2, "Prefer not to answer")
+
+# Compute IDK rates
+idk_table <- compute_rate(ukb_v2, "I don't know")
+
+# Merge both PNA and IDK tables
+merged_table <- merge(pna_table, idk_table, by = "column", all = TRUE)
+
+# Order by highest overall PNA rate (optional)
+merged_table <- merged_table[order(-merged_table$`Prefer not to answer_rate_overallN`), ]
+
+# View result
+head(merged_table)
+
+```
+
+#Convert IDK and PNA to NAs
+
+```{r, NA}
+#change all IDK to NAs
+ukb_v2[] <- lapply(ukb_v2, function(x) {
+  if (is.character(x) || is.factor(x)) {
+    x[x == "Do not know"] <- NA
+  }
+  x
+})
+
+#check
+sum(sapply(ukb_v2, function(x) {
+  if (is.factor(x)) x <- as.character(x)
+  if (is.character(x)) sum(x == "Do not know", na.rm = TRUE) else 0
+}))
+
+
+# Convert all "Prefer not to answer" to NA
+ukb_v2[] <- lapply(ukb_v2, function(x) {
+  if (is.character(x) || is.factor(x)) {
+    x[x == "Prefer not to answer"] <- NA
+  }
+  x
+})
+
+# Quick check: should be 0 now
+sum(sapply(ukb_v2, function(x) {
+  if (is.factor(x)) x <- as.character(x)
+  if (is.character(x)) sum(x == "Prefer not to answer", na.rm = TRUE) else 0
+}))
+```
+
+#Convert all chara vars to numeric
+
+```{r, char-num}
+
+#change pna to na in continuous variables
+char_cols <- names(ukb_v2)[sapply(ukb_v2, is.character)]
+
+#change character to numeric
+ukb_v2[char_cols] <- lapply(ukb_v2[char_cols], function(x) {
+  x[x == "Prefer not to answer"] <- NA
+  suppressWarnings(as.numeric(x))
+})
+
+#final check
+types_df <- data.frame(
+  variable = names(ukb_v2),
+  class = sapply(ukb_v2, function(x) paste(class(x), collapse = "/")),
+  stringsAsFactors = FALSE
+)
+
+```
+
+## 4) reclassify ethnicity
+
+```{r}
+eth <- as.character(ukb_v2$ethnicity.0.0)
+eth <- trimws(eth)
+
+
+white_set <- c(
+  "White",
+  "British", "Irish", "Any other white background"
+)
+
+asian_set <- c(
+  "Asian or Asian British",
+  "Indian", "Pakistani", "Bangladeshi",
+  "Any other Asian background",
+  "Chinese"
+)
+
+mixed_set <- c(
+  "Mixed",
+  "White and Black Caribbean", "White and Black African", "White and Asian",
+  "Any other mixed background"
+)
+
+black_set <- c("Black or Black British", "Caribbean", "African", "Any other Black background")
+
+other_set <- c('Other ethnic group')
+
+
+ukb_v2$ethnicity.0.0 <- dplyr::case_when(
+  is.na(eth) ~ NA_character_,
+  eth %in% white_set ~ "White",
+  eth %in% asian_set ~ "Asian",
+  eth %in% mixed_set ~ "Mixed",
+  eth %in% black_set ~ "Black",
+  eth %in% other_set ~ "Other")
+
+ukb_v2$ethnicity.0.0  <- as.factor(ukb_v2$ethnicity.0.0)
+```
+
+## 5) Outlier removal
+
+*For ukbiobank edit this so all values "\< 0" becomes NA*
+
+```{r, outliers}
+
+ukb_v2 <- ukb_v2 %>%
+  mutate(across(
+    where(is.numeric),
+    ~ ifelse(. < -1e5, NA, .)
+  ))
+
+```
+
+## 6) Instance selection
+
+Select the latest instance for all vars
+
+*For ukbiobank need to check how instances are ordered compared with synthetic, i.e., is each col one category?*
+
+```{r, instance}
+# only have one date of death col (both cols are the exact same)
+
+ukb_v2$date_death.0.0.1 <- NULL 
+
+# keep latest ses_current_employment_status
+
+ukb_v2 <- ukb_v2[, !grepl("ses_current_employment_status\\.0\\.[0-5]$", names(ukb_v2))]
+
+# keep the latest ses_commute_transport_type
+
+ukb_v2 <- ukb_v2[, !grepl("ses_commute_transport_type\\.0\\.[0-2]$", names(ukb_v2))]
+
+# take the latest qualification col
+
+ukb_v2 <- ukb_v2[, !grepl("qualification\\.0\\.[0-4]$", names(ukb_v2))]
+
+```
+
+## 7) Merging cols
+
+```{r, merge}
+
+# for reproducibility take automated sbp and dbp cols
+
+# remove manual bp cols
+
+ukb_v2 <- ukb_v2%>% 
+  select(-sbp_manual.0.0, -sbp_manual.0.1, -dbp_manual.0.0, -dbp_manual.0.1)
+
+# average sbp cols
+
+ukb_v2 <- ukb_v2 %>%
+  mutate(across(c(sbp_automated.0.0, sbp_automated.0.1), ~ {
+        x <- as.numeric(as.character(.))
+        x[x == 8242] <- NA
+        x
+      }
+    ),
+    sbp_avg = rowMeans(across(c(sbp_automated.0.0, sbp_automated.0.1)),na.rm = TRUE)) %>%
+  select(-sbp_automated.0.0, -sbp_automated.0.1)
+
+# average dbp cols
+
+ukb_v2 <- ukb_v2%>% 
+  mutate(dbp_avg = rowMeans(select(., dbp_automated.0.0, dbp_automated.0.1), na.rm = TRUE))%>%
+  select(-dbp_automated.0.0, -dbp_automated.0.1)
+
+# average fev1 and fvc cols
+
+ukb_v2 <- ukb_v2%>%
+  mutate(fev_avg = rowMeans(select(., fev1.0.0, fev1.0.1, fev1.0.2), na.rm = TRUE))%>%
+  mutate(across(c(fvc.0.0, fvc.0.1, fvc.0.2), ~ as.numeric(as.character(.)))) %>%
+  mutate(fvc_avg = rowMeans(select(., fvc.0.0, fvc.0.1, fvc.0.2), na.rm = TRUE))%>%
+  select(-fvc.0.0, -fvc.0.1, -fvc.0.2, -fev1.0.0, -fev1.0.1, -fev1.0.2)
+
+# drop data
+
+ukb_v2 <- ukb_v2%>%
+  select(-sleep_snore.1.0, -sleep_snore.2.0, -sleep_snore.3.0, -sleep_chronotype.1.0, -sleep_chronotype.2.0, -sleep_chronotype.3.0)
+
+# Due to synthetic data yob not being linked with mob and dob we do this manually here
+# SKIP THIS STEP FOR BIOBANK
+
+ukb_v2$mob <- month(ukb_v2$dob.0.0, label = TRUE)
+ukb_v2$yob <- year(ukb_v2$dob.0.0)
+
+# remove synthetic mob and yob <- DO NOT DO THIS IN BIOBANK
+
+ukb_v2 <- ukb_v2%>% 
+  select(-yob.0.0, -mob.0.0)
+
+# Extra date of death col needs to be removed
+
+# ukb_v2 <- ukb_v2%>% 
+#  select(-cvd_date.1)
+
+```
+
+## 8) Skip logic
+
+Need to ask whether we should be doing this before/after imputation. For now I made two datasets. One that deals with skip logic beforehand, and one that deals with it after imputation.
+
+#### Smoke skip logic
+
+```{r, smoke skip logic}
+
+ukb_v3 <- ukb_v2
+
+current_smoker <- ukb_v3$smoke_tobacco_current.0.0 =="Yes, on most or all days"
+not_current_smoker <- !current_smoker
+ukb_v3$smoke_current_indicator <- ifelse(current_smoker, 1, 0)
+
+ukb_v3$smoke_tobacco_type_current.0.0 <- as.character(ukb_v3$smoke_tobacco_type_current.0.0)
+ukb_v3$smoke_tobacco_type_current.0.0[not_current_smoker] <- "None"
+ukb_v3$smoke_number_daily_current_smoker.0.0[not_current_smoker] <- 0
+
+
+# field 1249
+past_smoker <- ukb_v3$smoke_tobacco_past.0.0 == 'Smoked on most or all days'
+not_past_smoker <- !past_smoker
+ukb_v3$smoke_past_indicator <- ifelse(past_smoker, 1, 0)
+
+ukb_v3$smoke_tobacco_type_previous.0.0 <- as.character(ukb_v3$smoke_tobacco_type_previous.0.0)
+ukb_v3$smoke_tobacco_type_previous.0.0[not_past_smoker] <- 'None'
+ukb_v3$smoke_cig_daily_previous.0.0[not_past_smoker] <- 0
+
+
+# field 3446
+cigar_pipe <- ukb_v3$smoke_tobacco_type_current.0.0 == "Cigars or pipes"
+not_cigar_pipe <- !cigar_pipe 
+ukb_v3$cigar_pipe_indicator <- ifelse(cigar_pipe, 1, 0)
+ukb_v3$smoke_number_cig_previous_current_cigar_pipe.0.0[not_cigar_pipe] <- 0
+```
+
+#### Diet skip logic
+
+*Removed coffee intake due to it not being available on UKBiobank*
+
+```{r}
+##coffee-------------------
+#add "None" as answer to "diet_coffee_type.0.0" if "diet_coffee_intake" = 0
+ukb_v3$diet_coffee_type.0.0 <- as.character(ukb_v3$diet_coffee_type.0.0)
+# ukb_v3$diet_coffee_type.0.0[ukb_v3$diet_coffee_intake.0.0 == 0] <- "None"
+
+##bread----------------------------
+#add "None" as answer to "diet_bread_type.0.0" if "diet_bread_intake" = 0
+ukb_v3$diet_bread_type.0.0 <- as.character(ukb_v3$diet_bread_type.0.0)
+ukb_v3$diet_bread_type.0.0[ukb_v3$diet_bread_intake.0.0 == 0] <- "None"
+
+#cereal----------------------------
+#add "None" as answer to "diet_cereal_type.0.0" if "diet_cereal_intake" = 0
+ukb_v3$diet_cereal_type.0.0 <- as.character(ukb_v3$diet_cereal_type.0.0)
+ukb_v3$diet_cereal_type.0.0[ukb_v3$diet_cereal_intake.0.0 == 0] <- "None"
+
+#alc_wih_meals---------------------
+#add "None" as answer to "alc_with_meals.0.0" if "alc_freq" = "Never"
+ukb_v3$alc_freq.0.0 <- as.character(ukb_v3$alc_freq.0.0)
+ukb_v3$alc_with_meals.0.0 <- as.character(ukb_v3$alc_with_meals.0.0)
+ukb_v3$alc_with_meals.0.0[ukb_v3$alc_freq.0.0 == "Never"] <- "None"
+```
+
+#### Medication skip logic
+
+```{r}
+# med_chol_bp_diabetes.0\.\0-2 <- male
+# med_chol_bp_diabetes_hormones.0\.\1-3 <- female
+
+# base off sex.0.0
+
+med_male <- grep("^med_chol_bp_diabetes\\.0\\.[0-2]+$",
+                             names(ukb_v3),
+                             value = TRUE)
+
+med_female <- grep("^med_chol_bp_diabetes_hormones\\.0\\.[0-3]+$",
+                               names(ukb_v3),
+                               value = TRUE)
+
+# Male meds: convert to character first, then apply NA for females
+ukb_v3 <- ukb_v3 %>%
+  mutate(across(all_of(med_male),
+                ~ ifelse(sex.0.0 == "Female", NA, as.character(.)))) %>%
+  
+  # Female meds: convert to character first, then apply NA for males
+  mutate(across(all_of(med_female),
+                ~ ifelse(sex.0.0 == "Male", NA, as.character(.))))
+```
+
+#### SES skip logic
+
+```{r}
+# create employed indicator 
+
+ukb_v3 <- ukb_v3 %>%
+  mutate(
+    employed = ifelse(
+      ses_current_employment_status.0.6 %in%
+        c("In paid employment or self-employed"),
+      1, 0
+    )
+  )
+
+#creating chars
+ukb_v3$ses_job_shift_work.0.0 <- as.character(ukb_v3$ses_job_shift_work.0.0)
+ukb_v3$ses_job_mainly_walking_or_standing.0.0 <- as.character(ukb_v3$ses_job_mainly_walking_or_standing.0.0)
+ukb_v3$ses_job_heavy_manual_or_physical_work.0.0 <- as.character(ukb_v3$ses_job_heavy_manual_or_physical_work.0.0)
+ukb_v3$ses_commute_transport_type.0.3 <- as.character(ukb_v3$ses_commute_transport_type.0.3)
+
+# ses_length_working_week.0.0
+ukb_v3$ses_length_working_week.0.0[ukb_v3$employed %in% c(0)] <- 0
+
+# ses_job_shift_work.0.0
+ukb_v3$ses_job_shift_work.0.0[ukb_v3$employed %in% c(0)] <- NA
+
+# ses_job_mainly_walking_or_standing.0.0
+ukb_v3$ses_job_mainly_walking_or_standing.0.0[ukb_v3$employed %in% c(0)] <- NA
+
+# ses_job_heavy_manual_or_physical_work
+ukb_v3$ses_job_heavy_manual_or_physical_work.0.0[ukb_v3$employed %in% c(0)] <- NA
+
+# ses_commute_transport_type
+ukb_v3$ses_commute_transport_type.0.3[ukb_v3$employed %in% c(0)] <- NA
+
+# ses_commute_frequency
+ukb_v3$ses_commute_frequency.0.0[ukb_v3$employed %in% c(0)] <- 0
+
+# ses_commute_distance_home_to_work
+ukb_v3$ses_commute_distance_home_to_work.0.0[ukb_v3$employed %in% c(0)] <- 0
+
+# ses_age_completed_full_time_education
+ukb_v3$ses_age_completed_full_time_education.0.0[ukb_v3$qualification.0.5 %in% c("College or University degree")] <- NA
+
+# ses_household_income_before_tax_avg
+ukb_v3$ses_household_income_before_tax_avg.0.0[ukb_v3$ses_accom_type.0.0 %in% c("Sheltered accommodation", "Care home")] <- NA
+
+```
+
+## 8) IMD tertiles
+
+```{r, imd}
+
+process_imd <- function(df) {
+  
+  # Map assessment centre to country
+  
+  england_centres <- c(
+    "Stockport (pilot)", "Manchester", "Oxford", "Stoke", "Reading",
+    "Bury", "Newcastle", "Leeds", "Bristol", "Barts", "Nottingham",
+    "Sheffield", "Liverpool", "Middlesborough", "Hounslow",
+    "Croydon", "Birmingham", "Cheadle (revisit)", "Cheadle (imaging)",
+    "Reading (imaging)", "Newcastle (imaging)", "Bristol (imaging)"
+  )
+  
+  scotland_centres <- c("Glasgow", "Edinburgh")
+  
+  wales_centres <- c("Cardiff", "Swansea", "Wrexham")
+  
+  df <- df %>%
+    mutate(
+      uk_country = case_when(
+        assessment_centre_location.0.0 %in% england_centres  ~ "England",
+        assessment_centre_location.0.0 %in% scotland_centres ~ "Scotland",
+        assessment_centre_location.0.0 %in% wales_centres    ~ "Wales",
+        TRUE ~ NA_character_
+      )
+    )
+  
+  # Country specific IMD vars
+  
+  df <- df %>%
+    mutate(
+      imd_raw = case_when(
+        uk_country == "England"  ~ ses_imd_england.0.0,
+        uk_country == "Scotland" ~ ses_imd_scotland.0.0,
+        uk_country == "Wales"    ~ ses_imd_wales.0.0,
+        TRUE ~ NA_real_
+      )
+    )
+  
+  # Country specific IMD tertiles
+  
+  df <- df %>%
+    group_by(uk_country) %>%
+    mutate(
+      imd_tertile = ntile(imd_raw, 3)
+    ) %>%
+    ungroup()
+  
+  # Merge IMD var
+  
+  df <- df %>%
+    mutate(
+      imd = imd_tertile
+    )
+  
+  df <- df%>%
+    select(-uk_country, -imd_raw, -imd_tertile, -ses_imd_england.0.0, -ses_imd_scotland.0.0, -ses_imd_wales.0.0)
+  
+  return(df)
+}
+
+ukb_v2 <- process_imd(ukb_v2)
+ukb_v3 <- process_imd(ukb_v3)
+
+```
+
+## 9) Missingness checks
+
+```{r, missingness}
+
+# Check column-wise missingness
+
+column_missing_rate <- sapply(ukb_v3, function(x) mean(is.na(x)))
+
+column_missing_summary <- data.frame(
+  var = names(ukb_v3),
+  column_missing_rate = column_missing_rate
+)
+
+# pull high missing vars 
+
+high_missing <- column_missing_summary %>%
+  filter(column_missing_rate > 0.5) %>%
+  mutate(
+    percent_missing = round(column_missing_rate * 100, 1)
+  ) %>%
+  arrange(desc(percent_missing))
+
+high_missing
+# Check row-wise missingness
+
+exclude_vars <- c("cvd_date", 
+                  "date_death.0.0", 
+                  "date_lost_to_fup.0.0")
+
+# Create subset excluding those columns
+ukb_subset <- ukb_v3[, !(names(ukb_v3) %in% exclude_vars)]
+
+# Row-wise missing rate
+row_missing_rate <- apply(ukb_subset, 1, function(x) mean(is.na(x)))
+
+# Optional: number of missing per row
+row_missing_n <- apply(ukb_subset, 1, function(x) sum(is.na(x)))
+
+# Combine into summary dataframe
+row_missing_summary <- data.frame(
+  missing_n = row_missing_n,
+  missing_rate = row_missing_rate
+)
+
+# visualising missingness
+# column summary
+summary(column_missing_rate)
+hist(column_missing_rate, breaks = 50)
+
+# row summary
+summary(row_missing_rate)
+hist(row_missing_rate, breaks = 50)
+
+```
+
+## 10) Excluding vars
+
+Vars have been excluded based on their level of missingness in the UK Biobank
+
+*Summed MET minutes/week is unavailable on Biobank, other vars have \>50% NA*
+
+```{r, exc}
+
+ukb_v3 <- ukb_v3%>%
+  select(-phys_MET_week.0.0, -starts_with("smoke_age"), 
+         -starts_with("smoke_tobacco_type_"), -diet_carb.0.0, -diet_energy.0.0, -diet_fat.0.0,
+         -diet_food_weight.0.0, -diet_polyunsat_fat.0.0, -diet_protein.0.0, -diet_sat_fat.0.0,
+         -diet_total_sugar.0.0, -sleep_wake_early.0.0, -sleep_too_much.0.0, 
+         -sleep_falling_asleep_trouble.0.0, -sleep_change.0.0, -sleep_daytime_nap.0.0, 
+         -smoke_people_in_household.0.0, -smoke_tobacco_exposure_home.0.0,  
+         -smoke_tobacco_exposure_outside.0.0)
+
+ukb_v2 <- ukb_v2%>%
+  select(-phys_MET_week.0.0, -starts_with("smoke_age"), 
+         -starts_with("smoke_tobacco_type_"), -diet_carb.0.0, -diet_energy.0.0, -diet_fat.0.0,
+         -diet_food_weight.0.0, -diet_polyunsat_fat.0.0, -diet_protein.0.0, -diet_sat_fat.0.0,
+         -diet_total_sugar.0.0, -sleep_wake_early.0.0, -sleep_too_much.0.0, 
+         -sleep_falling_asleep_trouble.0.0, -sleep_change.0.0, -sleep_daytime_nap.0.0, 
+         -smoke_people_in_household.0.0, -smoke_tobacco_exposure_home.0.0,  
+         -smoke_tobacco_exposure_outside.0.0)
+
+```
+
+## 11) Imputation
+
+For imputation please submit the job /rds/general/project/hda_25-26/live/TDS/TDS_Group8/imputation/scripts/imputation_script/impute_ah.sh
+
+This will split the dataset into train and test and run imputation on train, using trained forests to impute test set.
+
+Imputed datasets can be found in: /rds/general/project/hda_25-26/live/TDS/TDS_Group8/imputation/imputed_df
+
+##### Save
+
+```{r, save}
+saveRDS(ukb_v2, file = "/rds/general/project/hda_25-26/live/TDS/TDS_Group8/imputation/imputed_df/raw/ukb_raw.rds")
+
+saveRDS(ukb_v3, file = "/rds/general/project/hda_25-26/live/TDS/TDS_Group8/imputation/imputed_df/raw/ukb_skip.rds")
+
+```
