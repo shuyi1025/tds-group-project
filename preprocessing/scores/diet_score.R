@@ -1,3 +1,4 @@
+rm(list = ls())
 library(data.table)
 
 ukb_v2 <- readRDS("/rds/general/project/hda_25-26/live/TDS/TDS_Group8/final_recode/ukb_v2.rds")
@@ -142,3 +143,25 @@ data_d[, diet_risk_score :=
 summary(data_d$diet_risk_score)
 table(data_d$diet_risk_score)
 sum(!is.na(data_d$diet_risk_score))
+
+#drop variables used to make score
+vars_to_drop <- paste0(c(
+  "diet_spread_type",
+  "diet_salt_added_food",
+  "diet_milk_type",
+  "diet_processed_meat_intake",
+  "diet_pork_intake",
+  "diet_oily_fish_intake",
+  "diet_non_oily_fish_intake",
+  "diet_lamb_mutton_intake",
+  "diet_cereal_intake",
+  "diet_beef_intake",
+  "diet_fresh_fruit_intake",
+  "diet_dried_fruit_intake",
+  "diet_cooked_veg_intake",
+  "diet_raw_veg_intake",
+  "diet_water_intake"
+), ".0.0")
+
+vars_to_drop <- intersect(vars_to_drop, names(data_d))
+data_d[, (vars_to_drop) := NULL]

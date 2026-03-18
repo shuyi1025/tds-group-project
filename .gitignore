@@ -47,14 +47,22 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
-extraction_and_recoding/
+
+# Files in extraction_and_recoding folder
+extraction_and_recoding/outputs/
+extraction_and_recoding/README.txt
+extraction_and_recoding/scripts/3-recode_fixed.R
+extraction_and_recoding/scripts/03-recode_extracted.R
+
+# scripts
+correlation_analysis_ah/
 Data/
 final_recode/
-imputation/*.rds
-preprocessing/distribution_check/*.html
-preprocessing/distribution_check/*_files/
-**/.quarto/
-**/*_files/
-**/*.html
-**/*.pdf
-**/*.png
+imputation/
+modelling/
+post_imputation/
+preprocessing/
+table 1/
+Partial_mixed_corr_v2.R
+
+

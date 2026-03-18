@@ -4,8 +4,8 @@
 
 cd /rds/general/project/hda_25-26/live/TDS/TDS_Group8/extraction_and_recoding/scripts
 
-eval "$(~/anaconda3/bin/conda shell.bash hook)"
-source activate r413
+eval "$(~/miniforge3/bin/conda shell.bash hook)"
+conda activate r413
 
 Rscript 3-recode_variables.R
 

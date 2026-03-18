@@ -141,3 +141,11 @@ barplot(
   main = "Mean Missingness by Domain (ukb_v2)"
 )
 par(op)
+
+#checking
+max_missing_vars <- missing_var %>%
+  group_by(domain) %>%
+  slice_max(pct_missing, n = 1, with_ties = FALSE) %>%
+  ungroup()
+
+print(max_missing_vars)
