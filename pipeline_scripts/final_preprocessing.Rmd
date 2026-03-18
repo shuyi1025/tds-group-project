@@ -21,7 +21,8 @@ output:
 9)  IMD tertiles
 10) Missingness checks
 11) Vars exclusion
-12) Imputation
+12) Table1
+13) Imputation
 
 ## 0) Setup
 
@@ -355,17 +356,6 @@ ukb_v2 <- ukb_v2 %>%
     -sleep_snore.1.0, -sleep_snore.2.0, -sleep_snore.3.0,
     -sleep_chronotype.1.0, -sleep_chronotype.2.0, -sleep_chronotype.3.0
   )
-
-# remove synthetic mob and yob <- DO NOT DO THIS IN BIOBANK
-
-ukb_v2 <- ukb_v2%>% 
-  dplyr::select(-yob.0.0, -mob.0.0)
-
-# Extra date of death col needs to be removed
-
-# ukb_v2 <- ukb_v2%>% 
-#  select(-cvd_date.1)
-
 ```
 
 ## 8) Skip logic
@@ -658,7 +648,88 @@ ukb_v2 <- ukb_v2%>%
 
 ```
 
-## 12) Imputation
+
+## 12 Table 1
+```{r}
+# ---- helper functions ----
+fmt_mean_sd <- function(x, digits = 1) {
+  x <- x[!is.na(x)]
+  if (length(x) == 0) return(NA_character_)
+  paste0(round(mean(x), digits), " (", round(sd(x), digits), ")")
+}
+
+fmt_n <- function(x) {
+  sum(!is.na(x))
+}
+
+cat_table <- function(x, varname, digits = 1, include_na = FALSE) {
+  if (!include_na) {
+    tab <- table(x, useNA = "no")
+    denom <- sum(tab)
+  } else {
+    tab <- table(x, useNA = "ifany")
+    denom <- sum(tab)
+  }
+  prop <- (tab / denom) * 100
+  
+  data.frame(
+    Variable = varname,
+    Level    = names(tab),
+    Summary  = paste0(as.integer(tab), " (", round(as.numeric(prop), digits), "%)"),
+    stringsAsFactors = FALSE
+  )
+}
+
+# ---- specify variables ----
+cont_vars <- c("age_recr.0.0", "bmi.0.0", "sbp_avg")
+
+cat_vars <- c("sex.0.0",
+              "ethnicity.0.0",
+              "cvd_event",
+              "smoke_status.0.0",
+              "alc_status.0.0",
+              "ses_current_employment_status.0.6",
+              "imd",
+              "qualification.0.5")
+
+# ---- build table 1 ----
+table1_list <- list()
+
+# add overall N
+table1_list[["N_total"]] <- data.frame(
+  Variable = "Participants",
+  Level = "",
+  Summary = as.character(nrow(ukb_v2)),
+  stringsAsFactors = FALSE
+)
+
+# continuous vars: Mean (SD)
+for (v in cont_vars) {
+  x <- ukb_v2[[v]]
+  table1_list[[v]] <- data.frame(
+    Variable = v,
+    Level = "",
+    Summary = paste0(fmt_mean_sd(x), "; n=", fmt_n(x)),
+    stringsAsFactors = FALSE
+  )
+}
+
+# categorical vars: n (%)
+for (v in cat_vars) {
+  x <- ukb_v2[[v]]
+  table1_list[[v]] <- cat_table(x, varname = v, digits = 1, include_na = FALSE)
+}
+
+table1_df <- do.call(rbind, table1_list)
+
+# view in console
+print(table1_df, row.names = FALSE)
+
+# export
+write.csv(table1_df, "Table1_baseR.csv", row.names = FALSE)
+```
+
+## 13) Imputation
 
 For imputation, run the corresponding imputation script in `pipeline_scripts/`.
 

@@ -963,20 +963,273 @@ ukb_test  <- reorder_cols(ukb_test)
 ```
 
 ## 6) Table 1
+```{r}
+# ---- helper functions ----
+fmt_mean_sd <- function(x, digits = 1) {
+  x <- x[!is.na(x)]
+  if (length(x) == 0) return(NA_character_)
+  paste0(round(mean(x), digits), " (", round(sd(x), digits), ")")
+}
+
+fmt_n <- function(x) {
+  sum(!is.na(x))
+}
+
+cat_table <- function(x, varname, digits = 1, include_na = FALSE) {
+  if (!include_na) {
+    tab <- table(x, useNA = "no")
+    denom <- sum(tab)
+  } else {
+    tab <- table(x, useNA = "ifany")
+    denom <- sum(tab)
+  }
+  prop <- (tab / denom) * 100
+  
+  data.frame(
+    Variable = varname,
+    Level    = names(tab),
+    Summary  = paste0(as.integer(tab), " (", round(as.numeric(prop), digits), "%)"),
+    stringsAsFactors = FALSE
+  )
+}
+
+# ---- specify variables ----
+cont_vars <- c("age_recr.0.0", "bmi.0.0", "sbp_avg")
+
+cat_vars <- c("sex.0.0",
+              "ethnicity.0.0",
+              "cvd_event",
+              "smoke_status.0.0",
+              "alc_status.0.0",
+              "ses_current_employment_status.0.6",
+              "imd",
+              "qualification.0.5")
+
+# ---- build table 1 ----
+table1_list <- list()
+
+# add overall N
+table1_list[["N_total"]] <- data.frame(
+  Variable = "Participants",
+  Level = "",
+  Summary = as.character(nrow(ukb_train)),
+  stringsAsFactors = FALSE
+)
+
+# continuous vars: Mean (SD)
+for (v in cont_vars) {
+  x <- ukb_train[[v]]
+  table1_list[[v]] <- data.frame(
+    Variable = v,
+    Level = "",
+    Summary = paste0(fmt_mean_sd(x), "; n=", fmt_n(x)),
+    stringsAsFactors = FALSE
+  )
+}
+
+# categorical vars: n (%)
+for (v in cat_vars) {
+  x <- ukb_train[[v]]
+  table1_list[[v]] <- cat_table(x, varname = v, digits = 1, include_na = FALSE)
+}
+
+table1_df <- do.call(rbind, table1_list)
+
+# view in console
+print(table1_df, row.names = FALSE)
+
+# export
+write.csv(table1_df, "../pipeline_outputs/Table1_imputed.csv", row.names = FALSE)
+```
 
 ## 7) Correlation/colinearity checks
+```{r}
+
+```
 
 ## 8) Manhattan plot
+```{r}
+outcome <- "cvd_event"
+covars  <- c("age_recr.0.0", "sex.0.0", "ethnicity.0.0",'bmi','sbp_avg','dbp_avg')
+stopifnot(outcome %in% names(ukb_train), all(covars %in% names(ukb_train)))
+ukb_train[[outcome]] <- as.integer(ukb_train[[outcome]])
+
+
+# Define exposome exposures
+drop_cols <- c(
+  "eid","cvd_date","date_death.0.0","date_lost_to_fup.0.0","date_recr.0.0",
+  "dob.0.0","mob","yob","assessment_centre_location.0.0",
+  outcome, covars
+)
+
+exposome_prefix <- c("^diet_", "^emp_", "^env_", "^med_", "^mh_", "^phys_", "^sed_", "^ses_", "^sleep_", "^smoke_")
+exposome_single <- c(
+  "qualification.0.5","alcohol_category","employed"
+)
+
+exposures <- names(ukb_train)[
+  Reduce(`|`, lapply(exposome_prefix, \(p) grepl(p, names(ukb_train)))) |
+    names(ukb_train) %in% exposome_single
+]
+exposures <- setdiff(exposures, drop_cols)
+
+# message("Scanning exposures: ", length(exposures))
+
+# Check not_scanned variables
+# all_cols <- names(train)
+# not_scanned <- setdiff(all_cols, exposures)
+# cat(not_scanned, sep = "\n")
+
+# Domain mapping
+
+get_domain <- function(v){
+  if (grepl("^diet_|^alcohol_category", v)) return("Diet/Alcohol")
+  if (grepl("^env_", v)) return("Environment")
+  if (grepl("^med_", v)) return("Medication")
+  if (grepl("^mh_", v)) return("Mental health")
+  if (grepl("^phys_|^sed_", v)) return("Physical activity")
+  if (grepl("^ses_|^emp_|^imd$|^qualification|^employed$", v)) return("Socioeconomic")
+  if (grepl("^sleep_", v)) return("Sleep")
+  if (grepl("^smoke_", v)) return("Smoking")
+  "Other"
+}
+
+# One-exposure EWAS model with GLOBAL p
+
+run_one <- function(var) {
+  dat <- train[, c(outcome, covars, var), drop = FALSE]
+  if (is.character(dat[[var]])) dat[[var]] <- as.factor(dat[[var]])
+  dat <- tidyr::drop_na(dat)
+  
+  # skip small sample
+  n_used <- nrow(dat)
+  if (n_used < 200) return(NULL)
+  
+  # skip constant
+  if (length(unique(dat[[var]])) < 2) return(NULL)
+  
+  # logistic regression
+  base_fml <- as.formula(paste0(outcome, " ~ ", paste(covars, collapse = " + ")))
+  full_fml <- as.formula(paste0(outcome, " ~ ", var, " + ", paste(covars, collapse = " + ")))
+  fit0 <- try(glm(base_fml, data = dat, family = binomial()), silent = TRUE)
+  fit1 <- try(glm(full_fml, data = dat, family = binomial()), silent = TRUE)
+  if (inherits(fit0, "try-error") || inherits(fit1, "try-error")) return(NULL)
+  
+  # exposure type
+  is_fact <- is.factor(dat[[var]])
+  
+  if (!is_fact) {
+    # numeric / 0-1: Wald p for var
+    sm <- summary(fit1)
+    if (!(var %in% rownames(sm$coefficients))) return(NULL)
+    beta <- sm$coefficients[var, "Estimate"]
+    pval <- sm$coefficients[var, "Pr(>|z|)"]
+    
+    return(data.frame(
+      variable = var,
+      domain = get_domain(var),
+      type = "numeric",
+      n_used = n_used,
+      beta = beta,
+      OR = exp(beta),
+      p = pval,
+      stringsAsFactors = FALSE
+    ))
+  } else {
+    # factor: GLOBAL LRT p
+    lr <- anova(fit0, fit1, test = "LRT")
+    pval <- lr$`Pr(>Chi)`[2]
+    if (is.na(pval)) return(NULL)
+    
+    return(data.frame(
+      variable = var,
+      domain = get_domain(var),
+      type = "factor_global",
+      n_used = n_used,
+      beta = NA_real_,
+      OR = NA_real_,
+      p = pval,
+      stringsAsFactors = FALSE
+    ))
+  }
+}
+
+res <- lapply(exposures, run_one) %>% bind_rows()
+
+res <- res %>%
+  mutate(
+    FDR = p.adjust(p, method = "BH"),
+    neglog10p = -log10(p)
+  )
+
+
+# 4) Plot Manhattan
+
+domain_order <- c(
+  "Diet/Alcohol",
+  "Environment",
+  "Medication",
+  "Mental health",
+  "Physical activity",
+  "Socioeconomic",
+  "Sleep",
+  "Smoking",
+  "Other"
+)
+
+res2 <- res %>%
+  mutate(domain = factor(domain, levels = domain_order)) %>%
+  arrange(domain, variable) %>%
+  mutate(pos = row_number())
+
+axis_df <- res2 %>%
+  group_by(domain) %>%
+  summarise(center = (min(pos) + max(pos)) / 2, .groups = "drop")
+
+bonf_thr <- 0.05 / nrow(res2)
+
+p_manhattan <- ggplot(res2, aes(x = pos, y = neglog10p, color = domain)) +
+  geom_point(size = 1.3, alpha = 0.85) +
+  geom_hline(yintercept = -log10(bonf_thr), linetype = "dashed") +
+  scale_x_continuous(breaks = axis_df$center, labels = axis_df$domain) +
+  labs(
+    title = "Adjusted Exposome Manhattan Plot (Train)",
+    x = "Exposure domains",
+    y = expression(-log[10](p))
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle = 25, hjust = 1)
+  )
+
+```
 
 ## 9) External exposome specific dataset
+```{r}
+outcome <- "cvd_event"
+covars  <- c("age_recr.0.0", "sex.0.0", "ethnicity.0.0",'bmi','sbp_avg','dbp_avg')
+drop_cols <- c(
+  "eid","cvd_date","date_death.0.0","date_lost_to_fup.0.0","date_recr.0.0",
+  "dob.0.0","mob","yob","assessment_centre_location.0.0",
+  outcome, covars
+)
+
+exposome_prefix <- c("^diet_", "^emp_", "^env_", "^med_", "^mh_", "^phys_", "^sed_", "^ses_", "^sleep_", "^smoke_")
+exposome_single <- c(
+  "qualification.0.5","alcohol_category","employed"
+)
+
+exposures <- names(ukb_train)[
+  Reduce(`|`, lapply(exposome_prefix, \(p) grepl(p, names(ukb_train)))) |
+    names(ukb_train) %in% exposome_single
+]
+exposures <- setdiff(exposures, drop_cols)
+```
 
 ##### Save
 
 ```{r, save}
-saveRDS(ukb_train, file = "/rds/general/project/hda_25-26/live/TDS/TDS_Group8/imputation/imputed_df/train_final.rds")
-
-saveRDS(ukb_test, file = "/rds/general/project/hda_25-26/live/TDS/TDS_Group8/imputation/imputed_df/test_final.rds")
-
-
-
+saveRDS(ukb_train, file = "../pipeline_outputs/train_final.rds")
+saveRDS(ukb_test, file = "../pipeline_outputs/test_final.rds")
 ```

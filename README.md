@@ -48,14 +48,23 @@ nano pipeline_scripts/preprocessing/final_preprocessing.Rmd
 
 ### 3. Imputation (HPC job)
 
+Submit the imputation job script:
+
+``` bash
+qsub pipeline_scripts/imputation.sh
+```
+
 ### 4. Downstream
 
 ## Dependencies
 
 ```         
-- dplyr (version 1.2.0)
-- lubridate (version 1.9.5)
-- stringr (version 1.6.0)
-- data.table (version 1.18.2.1)
-- openxlsx (version 4.2.8.1)
+- dplyr
+- lubridate
+- stringr
+- data.table
+- openxlsx
+- miceRanger
+- caret
+- doParallel
 ```
