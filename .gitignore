@@ -48,6 +48,9 @@ po/*~
 # RStudio Connect folder
 rsconnect/
 
+# MacOS location file
+**/.DS_Store
+
 # Files in extraction_and_recoding folder
 extraction_and_recoding/outputs/
 extraction_and_recoding/README.txt
