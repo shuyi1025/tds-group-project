@@ -2,7 +2,9 @@
 title: "Preprocessing"
 author: "Group_8"
 date: "2026-03-01"
-output: html_document
+output:
+  html_document: default
+  pdf_document: default
 ---
 
 # Workflow overview:
