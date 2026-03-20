@@ -17,13 +17,13 @@ for (k in 1:ncol(mydata)) {
   # Identifying corresponding coding name and coding ID
   tmp_coding_name <- gsub("\\..*", "", colnames(mydata)[k])
   tmp_coding_id <- choices[tmp_coding_name, "Coding"]
-
+  
   if (!is.na(tmp_coding_id)) {
     # Extracting corresponding coding (if any)
     coding <- read.table(paste0("../parameters/codings/codes_", tmp_coding_id, ".txt"), header = TRUE, stringsAsFactors = FALSE)
     coding$RecodedValue[coding$RecodedValue == "NA"] <- NA
     coding$RecodedMeaning[coding$RecodedMeaning == "NA"] <- NA
-
+    
     # Storing IDs of categorical variables for which some categories are not coded
     if (grepl("categorical", tolower(choices[tmp_coding_name, "ValueType"]))) {
       if (!all(as.character(na.exclude(mydata[, k])) %in% coding$OriginalValue)) {
@@ -31,30 +31,32 @@ for (k in 1:ncol(mydata)) {
         weird_recoding <- c(weird_recoding, k)
       }
     }
-
+    
     # Preparing recoding (applicable to any data type if a coding ID is provided)
     recoding <- coding$RecodedMeaning
     names(recoding) <- coding$OriginalValue
-    recoded_data[, k] <- recoding[as.character(mydata[, k])]
-
+    var_to_recode_bin <- as.character(mydata[, k]) %in% names(recoding)
+    recoded_data[, k] <- mydata[, k]
+    recoded_data[var_to_recode_bin, k] <- recoding[as.character(mydata[var_to_recode_bin, k])]
+    
     if (grepl("categorical", tolower(choices[tmp_coding_name, "ValueType"]))) {
       # Recoding for categorical variables: levels are ordered as indicated by RecodedValue
       recoded_data[, k] <- factor(recoded_data[, k], levels = unique(coding$RecodedMeaning[sort.list(as.numeric(coding$RecodedValue))]))
     }
   }
-
+  
   if ((grepl("integer", tolower(choices[tmp_coding_name, "ValueType"]))) | (grepl("continuous", tolower(choices[tmp_coding_name, "ValueType"])))) {
     # Recoding for continuous/integers: as numeric if no character strings
     if (all(!grepl("\\D", recoded_data[, k]))) {
       recoded_data[, k] <- as.numeric(recoded_data[, k])
     }
   }
-
+  
   if (grepl("date", tolower(choices[tmp_coding_name, "ValueType"]))) {
     # Recoding for dates
     recoded_data[, k] <- as.Date(recoded_data[, k], origin = "1970-01-01")
   }
-
+  
   if (tolower(choices[tmp_coding_name, "ValueType"]) %in% c("time", "text", "compound")) {
     # Recoding for text/time/compound (rare types)
     recoded_data[, k] <- as.character(recoded_data[, k])
@@ -75,13 +77,13 @@ continuous_codings <- list.files(path = "../parameters/codings", pattern = "code
 if (length(continuous_codings) > 0) {
   print(paste0("Detected ", length(continuous_codings), " coding(s) for continuous variables:"))
   print(cbind(continuous_codings))
-
+  
   # For loop over fields to recode
   fields_to_recode <- gsub("\\..*", "", gsub(".*_", "", continuous_codings))
   for (i in length(fields_to_recode)) {
     tmp_coding_name <- choices[which(choices$FieldID == fields_to_recode[i]), "CodingName"]
     coding <- read.table(paste0("../parameters/codings/", continuous_codings[i]),
-      header = TRUE, stringsAsFactors = FALSE
+                         header = TRUE, stringsAsFactors = FALSE
     )
     ids <- which(gsub("\\..*", "", colnames(mydata)) == tmp_coding_name)
     recoded_data <- cbind(recoded_data, recoded_data[, ids, drop = FALSE])
@@ -93,16 +95,16 @@ if (length(continuous_codings) > 0) {
       tmp_coding <- coding
       tmp_coding$MinValue[is.na(tmp_coding$MinValue)] <- min(mydata[, j], na.rm = TRUE) - 1
       tmp_coding$MaxValue[is.na(tmp_coding$MaxValue)] <- max(mydata[, j], na.rm = TRUE) + 1
-
+      
       # Recoding each category
       for (k in 1:nrow(tmp_coding)) {
         tmp_cat_ids <- which((mydata[, j] >= tmp_coding[k, "MinValue"]) & (mydata[, j] < tmp_coding[k, "MaxValue"]))
         recoded_data[tmp_cat_ids, j] <- tmp_coding[k, "RecodedMeaning"]
       }
-
+      
       # Factor levels are ordered as indicated by RecodedValue
       recoded_data[, j] <- factor(recoded_data[, j], levels = tmp_coding$RecodedMeaning[sort.list(as.numeric(tmp_coding$RecodedValue))])
-
+      
       # Quality check
       print(colnames(mydata)[j])
       print(table(recoded_data[, j]))
