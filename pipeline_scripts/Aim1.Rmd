@@ -296,10 +296,10 @@ test_baseline_ee_onehot <- cbind(
 )
 
 write.csv(train_baseline_ee_onehot,
-          "../pipeline_scripts/train_baseline_ee_onehot.csv",
+          "../pipeline_outputs/train_baseline_ee_onehot.csv",
           row.names = FALSE)
 write.csv(train_baseline_ee_onehot,
-          "../pipeline_scripts/test_baseline_ee_onehot.csv",
+          "../pipeline_outputs/test_baseline_ee_onehot.csv",
           row.names = FALSE)
 
 ```
