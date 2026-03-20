@@ -86,4 +86,7 @@ nano pipeline_scripts/preprocessing/Aim1.Rmd
 - miceRanger
 - caret
 - doParallel
+- glmnet
+- sharp
+- ggplot2
 ```
