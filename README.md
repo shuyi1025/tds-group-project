@@ -89,4 +89,6 @@ nano pipeline_scripts/preprocessing/Aim1.Rmd
 - glmnet
 - sharp
 - ggplot2
+- GGally
+- corrplot
 ```
