@@ -157,7 +157,7 @@ roc_df <- data.frame(
   fpr = 1 - roc_obj$specificities
 )
 
-ggplot(roc_df, aes(x = fpr, y = tpr)) +
+lassoplot <- ggplot(roc_df, aes(x = fpr, y = tpr)) +
   geom_line(size = 1.2, color = "steelblue") +
   geom_abline(slope = 1, intercept = 0,
               linetype = "dashed", color = "grey") +
@@ -172,6 +172,13 @@ ggplot(roc_df, aes(x = fpr, y = tpr)) +
            size = 5) +
   theme_minimal(base_size = 14)
 
+ggsave(
+  "../pipeline_outputs/lasso_ROC_curve.png",
+  plot = lassoplot,
+  width = 8,
+  height = 6,
+  dpi = 300
+)
 
 # Extract selected variables (non-zero coefficients)
 coef_mat <- as.matrix(coef(cvfit, s = lambda_use))
@@ -198,6 +205,17 @@ stab <- VariableSelection(
   penalty.factor = penalty_factor
 )
 
+png(
+  filename = "../pipeline_outputs/CalibrationPlot.png",
+  width = 2000,
+  height = 1600,
+  res = 300
+)
+
+CalibrationPlot(stab)
+
+dev.off()
+
 saveRDS(stab, "../pipeline_outputs/stab.rds")
 
 # Extract results
@@ -219,13 +237,26 @@ stable_vars_df <- sel_prop_df %>%
 
 saveRDS(sel_prop_df, "../pipeline_outputs/stable_vars_df.rds")
 
-# Refit final model on selected variables
+
+# Refit final model on selected variables and baseline variables
 stable_vars <- stable_vars_df$variable
-X_tr_sel <- X_tr[, stable_vars, drop = FALSE]
-X_te_sel <- X_te[, stable_vars, drop = FALSE]
+escape_regex <- function(x) {
+  gsub("([][{}()+*^$|\\\\?.])", "\\\\\\1", x)
+}
+
+baseline_cols <- unique(unlist(lapply(baseline_covars, function(v) {
+  grep(paste0("^", escape_regex(v)), colnames(X_tr), value = TRUE)
+})))
+
+final_vars <- unique(c(baseline_cols, stable_vars))
+
+final_vars <- intersect(final_vars, colnames(X_tr))
+
+X_tr_final <- X_tr[, final_vars, drop = FALSE]
+X_te_final <- X_te[, final_vars, drop = FALSE]
 
 final_cvfit <- cv.glmnet(
-  x = X_tr_sel,
+  x = X_tr_final,
   y = y_tr,
   family = 'binomial',
   alpha = 1,
@@ -235,8 +266,9 @@ final_cvfit <- cv.glmnet(
 )
 
 test_prob <- as.numeric(
-  predict(final_cvfit, newx = X_te_sel, s = "lambda.min", type = "response")
+  predict(final_cvfit, newx = X_te_final, s = "lambda.min", type = "response")
 )
+
 
 # Example AUC
 auc_obj <- roc(y_te, test_prob)
@@ -247,7 +279,7 @@ roc_df <- data.frame(
   fpr = 1 - auc_obj$specificities
 )
 
-ggplot(roc_df, aes(x = fpr, y = tpr)) +
+stabsplot <- ggplot(roc_df, aes(x = fpr, y = tpr)) +
   geom_line(color = "blue", size = 1.2) +
   geom_abline(linetype = "dashed", color = "grey") +
   labs(
@@ -256,6 +288,14 @@ ggplot(roc_df, aes(x = fpr, y = tpr)) +
     y = "True Positive Rate"
   ) +
   theme_minimal()
+
+ggsave(
+  "../pipeline_outputs/stabs_ROC_curve.png",
+  plot = stabsplot,
+  width = 8,
+  height = 6,
+  dpi = 300
+)
 ```
 
 ## 4) Make onehot encoding dataset with selected variables
