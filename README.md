@@ -11,10 +11,11 @@ This repository contains the data processing and modelling pipeline for analysin
 ```         
 TDS_Group8/
 ├── extraction_and_recoding/    # extraction + recoding workflow
-├── pipeline_scripts/           # main preprocessing / imputation / downstream scripts
+├── pipeline_scripts/           # main preprocessing / imputation / downstream / Aim 1 scripts
     ├── preprocessing
     ├── imputation
     ├── post_imputation
+    ├── Aim 1
 ├── pipeline_outputs/           # generated outputs
 ```
 
