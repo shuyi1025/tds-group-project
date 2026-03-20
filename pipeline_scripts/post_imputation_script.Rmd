@@ -276,7 +276,7 @@ ukb_test  <- clean_employment_data(ukb_test)
 
 skip_indicators <- function(df){
   df%>%
-    select(-employed, -smoke_past_indicator, -smoke_current_indicator,  
+    dplyr::select(-employed, -smoke_past_indicator, -smoke_current_indicator,  
            -ses_age_completed_full_time_education.0.0)
 }
 
@@ -393,13 +393,6 @@ exposures <- names(ukb_train)[
     names(ukb_train) %in% exposome_single
 ]
 exposures <- setdiff(exposures, drop_cols)
-
-# message("Scanning exposures: ", length(exposures))
-
-# Check not_scanned variables
-# all_cols <- names(train)
-# not_scanned <- setdiff(all_cols, exposures)
-# cat(not_scanned, sep = "\n")
 
 # Domain mapping
 
@@ -524,6 +517,9 @@ p_manhattan <- ggplot(res2, aes(x = pos, y = neglog10p, color = domain)) +
     axis.text.x = element_text(angle = 25, hjust = 1)
   )
 
+print(p_manhattan)
+ggsave("../pipeline_outputs/manhattan_train_by_domain.png", p_manhattan, width = 12, height = 5, dpi = 300)
+
 ```
 
 ## 5) External exposome correlation analysis
@@ -608,10 +604,10 @@ association_matrix <- function(df){
 # Prepare combined dataframe 
 
 domain_list <- list(
-  lifestyle = train %>% select(matches("^(alc|diet|phys|sed|smoke|sleep)")),
-  socioeconomic = train %>% select(matches("^(ses|emp)"), qualification.0.5, imd, ethnicity.0.0),
-  psychosocial = train %>% select(matches("^mh")),
-  environmental = train %>% select(matches("^env"))
+  lifestyle = train %>% dplyr::select(matches("^(alc|diet|phys|sed|smoke|sleep)")),
+  socioeconomic = train %>% dplyr::select(matches("^(ses|emp)"), qualification.0.5, imd, ethnicity.0.0),
+  psychosocial = train %>% dplyr::select(matches("^mh")),
+  environmental = train %>% dplyr::select(matches("^env"))
 )
 
 # Convert characters to factors
@@ -649,8 +645,8 @@ names(assoc_long) <- c("Variable1", "Variable2", "Association")
 
 # Remove self-correlations and duplicates
 assoc_long <- assoc_long %>%
-  filter(Variable1 != Variable2) %>%
-  filter(as.character(Variable1) < as.character(Variable2))
+  dplyr::filter(Variable1 != Variable2) %>%
+  dplyr::filter(as.character(Variable1) < as.character(Variable2))
 
 # Define thresholds
 thresholds <- c(0.5, 0.7, 0.9)
@@ -658,7 +654,7 @@ thresholds <- c(0.5, 0.7, 0.9)
 # Loop over thresholds and save CSVs
 for(thresh in thresholds){
   strong_df <- assoc_long %>%
-    filter(abs(Association) >= thresh) %>%
+    dplyr::filter(abs(Association) >= thresh) %>%
     arrange(desc(abs(Association)))
   
   # Print top 30 to console
@@ -668,7 +664,7 @@ for(thresh in thresholds){
   # Save to CSV
   write.csv(
     strong_df,
-    file = paste0("strong_associations_", gsub("\\.", "", thresh*100), ".csv"),
+    file = paste0("../pipeline_outputs/strong_associations_", gsub("\\.", "", thresh*100), ".csv"),
     row.names = FALSE
   )
 }
@@ -683,8 +679,8 @@ for(thresh in thresholds){
 
 # Subset data for variables of interest
 plot_df <- train %>%
-  select(age_recr.0.0, bmi.0.0, sbp_avg, dbp_avg, sex.0.0) %>%  # adjust variable names if needed
-  filter(!is.na(age_recr.0.0) & !is.na(bmi.0.0) & !is.na(sbp_avg) & !is.na(dbp_avg) & !is.na(sex.0.0))
+  dplyr::select(age_recr.0.0, bmi.0.0, sbp_avg, dbp_avg, sex.0.0) %>%  # adjust variable names if needed
+  dplyr::filter(!is.na(age_recr.0.0) & !is.na(bmi.0.0) & !is.na(sbp_avg) & !is.na(dbp_avg) & !is.na(sex.0.0))
 
 # Ensure Sex is factor
 plot_df$sex.0.0 <- as.factor(plot_df$sex.0.0)
@@ -709,7 +705,7 @@ pair_plot <- ggpairs(
 
 
 # Save to file
-ggsave("age_bmi_sbp_dbp_pairs.png", pair_plot, width = 10, height = 10, dpi = 300)
+ggsave("../pipeline_outputs/age_bmi_sbp_dbp_pairs.png", pair_plot, width = 10, height = 10, dpi = 300)
 
 # Display plot
 pair_plot
@@ -720,7 +716,7 @@ pair_plot
 
 ```{r}
 strong_075 <- assoc_long %>%
-  filter(abs(Association)>=0.75) %>%
+  dplyr::filter(abs(Association)>=0.75) %>%
   arrange(desc(abs(Association)))
 
 cat("\nAssociations ≥ 0.75\n")
@@ -789,7 +785,7 @@ process_mh_activities <- function(df) {
   
   # Drop original array columns
   df <- df %>%
-    select(-all_of(mh_cols_present))
+    dplyr::select(-all_of(mh_cols_present))
   
   return(df)
 }
@@ -910,7 +906,7 @@ process_med_prch <- function(df) {
   
   # Drop original array columns
   df <- df %>%
-    select(-all_of(med_cols_present))
+    dplyr::select(-all_of(med_cols_present))
   
   return(df)
 }
@@ -989,7 +985,7 @@ process_cbpd_meds <- function(df)  {
   # Drop original arrays
   
   df <- df %>%
-    select(-all_of(med_cols_present))
+    dplyr::select(-all_of(med_cols_present))
   
   return(df)
   }
@@ -1087,7 +1083,7 @@ process_diet <- function(df) {
        risk_water]
   
   df <- df %>%
-    select(-starts_with("risk_"), -starts_with("diet_total_f"), -starts_with("fv_"), -diet_total_red_meat_intake)
+    dplyr::select(-starts_with("risk_"), -starts_with("diet_total_f"), -starts_with("fv_"), -diet_total_red_meat_intake)
   
   return(df)
 }
@@ -1269,7 +1265,7 @@ create_mh_symptom_score <- function(df) {
   )
   
   df <- df %>%
-    mutate(
+    dplyr::mutate(
       mh_depression_score   = unname(score_map[as.character(mh_frequency_depression_2_weeks.0.0)]),
       mh_tenseness_score    = unname(score_map[as.character(mh_frequency_tenseness_2_weeks.0.0)]),
       mh_tiredness_score    = unname(score_map[as.character(mh_frequency_tiredness_2_weeks.0.0)]),
@@ -1281,7 +1277,7 @@ create_mh_symptom_score <- function(df) {
         mh_tiredness_score +
         mh_unenthusiasm_score
     ) %>%
-    select(
+    dplyr::select(
       -mh_frequency_depression_2_weeks.0.0,
       -mh_frequency_tenseness_2_weeks.0.0,
       -mh_frequency_tiredness_2_weeks.0.0,
@@ -1308,7 +1304,7 @@ test_v1  <- create_mh_symptom_score(test_v1)
 process_alcohol_bmi <- function(df) {
   
   df %>%
-    mutate(
+    dplyr::mutate(
       
       #aclohol categories
       alcohol_category = case_when(
@@ -1351,7 +1347,7 @@ process_alcohol_bmi <- function(df) {
     ) %>%
     
 # drop original cols
-  select(-bmi.0.0, -alc_freq.0.0, -alc_status.0.0,)
+  dplyr::select(-bmi.0.0, -alc_freq.0.0, -alc_status.0.0,)
 }  
 train_v1 <- process_alcohol_bmi(train_v1)
 test_v1  <- process_alcohol_bmi(test_v1)
@@ -1403,7 +1399,7 @@ process_employment <- function(df) {
   df <- bind_cols(df, as.data.frame(onehot))
   
   df <- df%>%
-    select(-employment_collapsed, -ses_current_employment_status.0.6)
+    dplyr::select(-employment_collapsed, -ses_current_employment_status.0.6)
   
   return(df)
 }
@@ -1423,7 +1419,7 @@ reorder_cols <- function(df){
   other_cols <- setdiff(names(df), first_cols)
 
   df %>%
-    select(all_of(first_cols), all_of(sort(other_cols)))
+    dplyr::select(all_of(first_cols), all_of(sort(other_cols)))
 
 }
 
