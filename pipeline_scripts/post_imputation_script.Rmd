@@ -9,14 +9,21 @@ output: html_document
 
 # Workflow overview:
 
+0)  Setup
+
+Part A) Exploratory analysis
+
 1)  Distribution checks
 2)  Dealing with skip logic
-3)  One hot encoding of categorical vars
-4)  Score creation
-5)  Categories
-6)  Table 1
-7)  Correlation/colinearity checks
-8)  Manhattan plot
+3)  Table 1
+4)  Manhattan plot
+5)  External exposome correlation analysis
+
+Part B) Data finalisation 
+
+6)  One hot encoding of categorical vars
+7)  Score creation
+8)  Categories
 9)  External exposome specific dataset creation
 
 ## 0) Setup
@@ -26,13 +33,16 @@ Load all necessary libraries
 ```{r setup, libraries}
 library(dplyr)
 library(stringr)
+library(corrplot)
+library(ggplot2)
+library(GGally) 
 ```
 
 Load train and test data
 
 ```{r, data}
-ukb_train <- readRDS("/rds/general/project/hda_25-26/live/TDS/TDS_Group8/imputation/imputed_df/ukb_train.rds")
-ukb_test <- readRDS("/rds/general/project/hda_25-26/live/TDS/TDS_Group8/imputation/imputed_df/ukb_test.rds")
+ukb_train <- readRDS("pipeline_outputs/ukb_train.rds")
+ukb_test <- readRDS("pipeline_outputs/ukb_test.rds")
 ```
 
 ## 1) Distribution checks
@@ -40,7 +50,7 @@ ukb_test <- readRDS("/rds/general/project/hda_25-26/live/TDS/TDS_Group8/imputati
 Load data before imputation to compare
 
 ```{r}
-ukb_raw <- readRDS("/rds/general/project/hda_25-26/live/TDS/TDS_Group8/imputation/imputed_df/raw/ukb_skip.rds")
+ukb_raw <- readRDS("extraction_and_recoding/outputs/ukb_recoded.rds")
 ```
 
 ### Check negative values
@@ -87,38 +97,51 @@ Ensure skip logic and structural NAs are being respected after imputation - will
 ### Smoke skip logic
 
 ```{r smoke}
-current_smoker <- ukb_train$smoke_tobacco_current.0.0 =="Yes, on most or all days"
-not_current_smoker <- !current_smoker
-ukb_train$smoke_current_indicator <- ifelse(current_smoker, 1, 0)
+process_smoking_vars <- function(df) {
+  
+  # Helper: create smoking indicator and set amount column to 0
+  # for people who are explicitly not in the target smoking group
+  add_smoking_indicator <- function(data, status_col, target_value, indicator_col, amount_col) {
+    if (all(c(status_col, amount_col) %in% names(data))) {
+      
+      status <- data[[status_col]]
+      
+      # indicator: 1 = target smoker, 0 = explicitly not, NA = missing
+      data[[indicator_col]] <- ifelse(
+        is.na(status),
+        NA,
+        ifelse(status == target_value, 1, 0)
+      )
+      
+      # set amount = 0 only for people explicitly not in target group
+      data[[amount_col]][!is.na(status) & status != target_value] <- 0
+    }
+    return(data)
+  }
+  
+  # Current smoker
+  df <- add_smoking_indicator(
+    data         = df,
+    status_col   = "smoke_tobacco_current.0.0",
+    target_value = "Yes, on most or all days",
+    indicator_col = "smoke_current_indicator",
+    amount_col   = "smoke_number_daily_current_smoker.0.0"
+  )
+  
+  # Past smoker
+  df <- add_smoking_indicator(
+    data         = df,
+    status_col   = "smoke_tobacco_past.0.0",
+    target_value = "Smoked on most or all days",
+    indicator_col = "smoke_past_indicator",
+    amount_col   = "smoke_cig_daily_previous.0.0"
+  )
+  
+  return(df)
+}
 
-ukb_train$smoke_number_daily_current_smoker.0.0[not_current_smoker] <- 0
-
-
-# field 1249
-past_smoker <- ukb_train$smoke_tobacco_past.0.0 == 'Smoked on most or all days'
-not_past_smoker <- !past_smoker
-ukb_train$smoke_past_indicator <- ifelse(past_smoker, 1, 0)
-
-
-ukb_train$smoke_cig_daily_previous.0.0[not_past_smoker] <- 0
-
-######
-
-# field 1239
-current_smoker <- ukb_test$smoke_tobacco_current.0.0 =="Yes, on most or all days"
-not_current_smoker <- !current_smoker
-ukb_test$smoke_current_indicator <- ifelse(current_smoker, 1, 0)
-
-ukb_test$smoke_number_daily_current_smoker.0.0[not_current_smoker] <- 0
-
-
-# field 1249
-past_smoker <- ukb_test$smoke_tobacco_past.0.0 == 'Smoked on most or all days'
-not_past_smoker <- !past_smoker
-ukb_test$smoke_past_indicator <- ifelse(past_smoker, 1, 0)
-
-
-ukb_test$smoke_cig_daily_previous.0.0[not_past_smoker] <- 0
+ukb_train <- process_smoking_vars(ukb_train)
+ukb_test  <- process_smoking_vars(ukb_test)
 ```
 
 ### Diet skip logic
@@ -262,707 +285,10 @@ ukb_test <- skip_indicators(ukb_test)
 
 ```
 
-## 3) One hot encoding & deterministic recoding of categorical vars
 
-### Mh_activities
 
-one hot encoding
+## 3) Table 1
 
-```{r, mh_activities}
-
-process_mh_activities <- function(df) {
-  
-  # Identify target columns
-  mh_cols_target <- paste0("mh_activities.0.", 0:4)
-  mh_cols_present <- mh_cols_target[mh_cols_target %in% names(df)]
-  
-  if (length(mh_cols_present) == 0) {
-    stop("No mh_activities columns found.")
-  }
-  
-  # Convert to character matrix
-  mh_mat_chr <- as.matrix(
-    df[, mh_cols_present, drop = FALSE] %>%
-      mutate(across(everything(), as.character))
-  )
-  
-  # Collect unique codes
-  all_codes <- sort(unique(c(mh_mat_chr)))
-  all_codes <- all_codes[!is.na(all_codes)]
-  
-  # Safe column name helper
-  safe_code_name <- function(x) {
-    x <- as.character(x)
-    x <- tolower(x)
-    x <- gsub("[^A-Za-z0-9]+", "_", x)
-    x <- gsub("^_+|_+$", "", x)
-    x
-  }
-  
-  onehot_names <- paste0("mh_activities_", safe_code_name(all_codes))
-  
-  # Build one-hot matrix
-  onehot <- matrix(
-    0L,
-    nrow = nrow(df),
-    ncol = length(all_codes),
-    dimnames = list(NULL, onehot_names)
-  )
-  
-  for (j in seq_along(all_codes)) {
-    code <- all_codes[j]
-    onehot[, j] <- as.integer(rowSums(mh_mat_chr == code, na.rm = TRUE) > 0)
-  }
-  
-  # Bind to df
-  df <- bind_cols(df, as.data.frame(onehot))
-  
-  # Drop original array columns
-  df <- df %>%
-    select(-all_of(mh_cols_present))
-  
-  return(df)
-}
-
-ukb_train <- process_mh_activities(ukb_train)
-ukb_test  <- process_mh_activities(ukb_test)
-
-```
-
-deterministic recoding
-
-```{r, mh_activities_dr}
-mh_exclusive <- function(df) {
-  
-  # Identify mh one-hot columns
-  mh_cols <- grep("^mh_activities_", names(df), value = TRUE)
-  
-  none_col <- "mh_activities_none_of_the_above"
-  pna_col  <- "mh_activities_prefer_not_to_answer"
-  
-  # Only operate on columns that actually exist
-  existing_special <- intersect(c(none_col, pna_col), names(df))
-  other_cols <- setdiff(mh_cols, existing_special)
-  
-  # Apply exclusivity safely
-  if (none_col %in% names(df)) {
-    idx_none <- df[[none_col]] == 1
-    df[idx_none, other_cols] <- 0
-  }
-  
-  if (pna_col %in% names(df)) {
-    idx_pna <- df[[pna_col]] == 1
-    df[idx_pna, other_cols] <- 0
-  }
-  
-  return(df)
-}
-
-ukb_train <- mh_exclusive(ukb_train)
-ukb_test  <- mh_exclusive(ukb_test)
-```
-
-### Medication prch
-
-One hot encoding & deterministic
-
-```{r, med_prch}
-process_med_prch <- function(df) {
-  
-  
-  # Identify array columns
-  med_cols_target <- paste0("med_pain_relief_constipation_heartburn.0.", 0:5)
-  med_cols_present <- med_cols_target[med_cols_target %in% names(df)]
-  
-  if (length(med_cols_present) == 0) {
-    stop("No med_pain_relief_constipation_heartburn.0.* columns found.")
-  }
-  
-  # Convert to character matrix
-  med_mat_chr <- as.matrix(
-    df[, med_cols_present, drop = FALSE] %>%
-      mutate(across(everything(), as.character))
-  )
-  
-  # Collect unique codes
-  all_codes <- sort(unique(c(med_mat_chr)))
-  all_codes <- all_codes[!is.na(all_codes)]
-  
-  # Safe name helper
-  safe_code_name <- function(x) {
-    x <- str_trim(x)
-    x <- str_to_lower(x)
-    x <- gsub("[^a-z0-9]+", "_", x)
-    x <- gsub("^_+|_+$", "", x)
-    x
-  }
-  
-  onehot_names <- paste0("med_prch_", safe_code_name(all_codes))
-  
-  # Build one-hot matrix
-  onehot <- matrix(
-    0L,
-    nrow = nrow(df),
-    ncol = length(all_codes),
-    dimnames = list(NULL, onehot_names)
-  )
-  
-  for (j in seq_along(all_codes)) {
-    code <- all_codes[j]
-    onehot[, j] <- as.integer(rowSums(med_mat_chr == code, na.rm = TRUE) > 0)
-  }
-  
-  df <- bind_cols(df, as.data.frame(onehot))
-  
-  # Rename specific columns safely
-  rename_map <- c(
-    "med_prch_ibuprofen_e_g_nurofen" = "med_prch_ibuprofen",
-    "med_prch_laxatives_e_g_dulcolax_senokot" = "med_prch_laxatives",
-    "med_prch_omeprazole_e_g_zanprol" = "med_prch_omeprazole",
-    "med_prch_ranitidine_e_g_zantac" = "med_prch_ranitidine"
-  )
-  
-  for (old in names(rename_map)) {
-    if (old %in% names(df)) {
-      names(df)[names(df) == old] <- rename_map[[old]]
-    }
-  }
-  
-  # Enforce exclusivity
-  none_col <- "med_prch_none_of_the_above"
-  prch_cols <- grep("^med_prch_", names(df), value = TRUE)
-  
-  if (none_col %in% names(df)) {
-    other_cols <- setdiff(prch_cols, none_col)
-    idx_none <- df[[none_col]] == 1
-    df[idx_none, other_cols] <- 0
-  }
-  
-  # Drop original array columns
-  df <- df %>%
-    select(-all_of(med_cols_present))
-  
-  return(df)
-}
-
-ukb_train <- process_med_prch(ukb_train)
-ukb_test  <- process_med_prch(ukb_test)
-```
-
-### Medication chol/bp/diabetes/hormone
-
-One hot encoding & deterministic recoding
-
-```{r, med_cbpd}
-
-# Apply one hot encoding
-process_cbpd_meds <- function(df)  {
-  
-  # Identify cols
-  
-  med_cols_male <- grep("^med_chol_bp_diabetes\\.0\\.[0-2]+$",
-                        names(df), value = TRUE)
-  
-  med_cols_female <- grep("^med_chol_bp_diabetes_hormones\\.0\\.[0-3]+$",
-                          names(df), value = TRUE)
-  
-  med_cols_present <- c(med_cols_male, med_cols_female)
-  
-  if (length(med_cols_present) == 0) {
-    stop("No medication columns found.")
-  }
-  
-  med_mat <- df[, med_cols_present, drop = FALSE] %>%
-    mutate(across(everything(), as.character))
-  
-  med_mat_chr <- as.matrix(med_mat)
-  
-  all_codes <- sort(unique(c(med_mat_chr)))
-  all_codes <- all_codes[!is.na(all_codes)]
-  
-  safe_code_name <- function(x) {
-    x <- as.character(x)
-    x <- str_trim(x)
-    x <- str_to_lower(x)
-    x <- gsub("[^a-z0-9]+", "_", x)
-    x <- gsub("^_+|_+$", "", x)
-    x
-  }
-  
-  onehot_names <- paste0("med_cbd_", safe_code_name(all_codes))
-  
-  onehot <- matrix(
-    0L,
-    nrow = nrow(med_mat_chr),
-    ncol = length(all_codes),
-    dimnames = list(NULL, onehot_names)
-  )
-  
-  for (j in seq_along(all_codes)) {
-    code <- all_codes[j]
-    onehot[, j] <- as.integer(rowSums(med_mat_chr == code, na.rm = TRUE) > 0)
-  }
-  
-  df <- bind_cols(df, as.data.frame(onehot))
-  
-# Enforce exclusivity (if answer is "None of the above" ensures all meds are 0)
-  
-  mh_cols <- grep("^med_cbd_", names(df), value = TRUE)
-  none_col <- "med_cbd_none_of_the_above"
-  other_cols <- setdiff(mh_cols, none_col)
-  
-  if (none_col %in% names(df)) {
-    idx_none <- df[[none_col]] == 1
-    df[idx_none, other_cols] <- 0
-  }
-  
-  # Drop original arrays
-  
-  df <- df %>%
-    select(-all_of(med_cols_present))
-  
-  return(df)
-  }
-
-ukb_train <- process_cbpd_meds(ukb_train)
-ukb_test  <- process_cbpd_meds(ukb_test)
-```
-
-## 4) Score creation
-
-### Diet score
-
-```{r, diet}
-process_diet <- function(df) {
-  
-  library(data.table)
-  
-  # Ensure we are working with data.table
-  if (!"data.table" %in% class(df)) df <- as.data.table(df)
-  
-  # Convert fruit/veg to numeric
-  fv_to_num <- function(x) {
-    x <- trimws(as.character(x))
-    x[x %in% c("Less than once", "Less than one")] <- "0"
-    suppressWarnings(as.numeric(x))
-  }
-  
-  freq_to_week <- function(x) {
-    x <- as.character(x)
-    out <- rep(NA_real_, length(x))
-    out[x == "Never"] <- 0
-    out[x == "Less than once a week"] <- 0.5
-    out[x == "Once a week"] <- 1
-    out[x == "2-4 times a week"] <- 3
-    out[x == "5-6 times a week"] <- 5.5
-    out[x == "Once or more daily"] <- 7
-    out
-  }
-  
-  df[, fv_fresh  := fv_to_num(diet_fresh_fruit_intake.0.0)]
-  df[, fv_dried  := fv_to_num(diet_dried_fruit_intake.0.0)]
-  df[, fv_cooked := fv_to_num(diet_cooked_veg_intake.0.0)]
-  df[, fv_raw    := fv_to_num(diet_raw_veg_intake.0.0)]
-  
-  # Totals
-  df[, diet_total_fish_intake :=
-       freq_to_week(diet_oily_fish_intake.0.0) +
-       freq_to_week(diet_non_oily_fish_intake.0.0)]
-  
-  df[, diet_total_red_meat_intake :=
-       freq_to_week(diet_lamb_mutton_intake.0.0) +
-       freq_to_week(diet_beef_intake.0.0) +
-       freq_to_week(diet_pork_intake.0.0)]
-  
-  df[, diet_total_fruit_veg_intake := fv_fresh + fv_dried + fv_cooked + fv_raw]
-  
-  # Dichotomise 
-  df[, risk_fruit_veg :=
-       fifelse(diet_total_fruit_veg_intake >= 5, 0, 1)]
-  
-  df[, risk_fish :=
-       fifelse(diet_total_fish_intake >= 2, 0, 1)]
-  
-  df[, risk_processed_meat :=
-       fifelse(freq_to_week(diet_processed_meat_intake.0.0) <= 1, 0, 1)]
-  
-  df[, risk_red_meat :=
-       fifelse(diet_total_red_meat_intake <= 1, 0, 1)]
-  
-  df[, risk_milk :=
-       fifelse(diet_milk_type.0.0 %in% c("Semi-skimmed", "Skimmed"), 0, 1)]
-  
-  df[, risk_spread :=
-       fifelse(diet_spread_type.0.0 == "Never/rarely", 0, 1)]
-  
-  df[, risk_salt :=
-       fifelse(diet_salt_added_food.0.0 == "Never/rarely", 0, 1)]
-  
-  df[, risk_cereal :=
-       fifelse(as.numeric(diet_cereal_intake.0.0) > 5, 0, 1)]
-  
-  df[, risk_water :=
-       fifelse(as.numeric(diet_water_intake.0.0) >= 6, 0, 1)]
-  
-  # Total dietary risk score 
-  df[, diet_risk_score :=
-       risk_fruit_veg +
-       risk_fish +
-       risk_processed_meat +
-       risk_red_meat +
-       risk_milk +
-       risk_spread +
-       risk_salt +
-       risk_cereal +
-       risk_water]
-  
-  df <- df %>%
-    select(-starts_with("risk_"), -starts_with("diet_total_f"), -starts_with("fv_"), -diet_total_red_meat_intake)
-  
-  return(df)
-}
-
-ukb_train <- process_diet(ukb_train)
-ukb_test  <- process_diet(ukb_test)
-
-```
-
-### Sleep score
-
-```{r, sleep}
-# Use 5 sleep factors: 
-# "sleep_daytime_dozing.0.0" <- "Sometimes", "Often", "All of the time" ~ 1, "Never/rarely" ~ 0
-# "sleep_insomnia.0.0" <- "Sometimes", "Usually" ~ 1, "Never/rarely" ~ 0
-# "sleep_snore.0.0" <- "Yes" ~ 1, "No" ~ 0 
-# "sleep_chronotype.0.0" <- "More an 'evening' than a 'morning' person" | "Definitely an 'evening' person" ~ 1, "Definitely a 'morning' person" | "More a 'morning' than 'evening' person" ~ 0
-# "sleep_duration.0.0" <- <7 | > 8 ~ 1, >=7 | <=8  ~ 0
-
-# create a function to remove the need to rerun the script
-
-create_sleep_score <- function(df) {
-  
-  df %>%
-    
-    # Ensure correct types first
-    mutate(
-      sleep_duration.0.0 = as.numeric(as.character(sleep_duration.0.0)),
-      sleep_chronotype.0.0 = as.character(sleep_chronotype.0.0),
-      sleep_insomnia.0.0 = as.character(sleep_insomnia.0.0),
-      sleep_snore.0.0 = as.character(sleep_snore.0.0),
-      sleep_daytime_dozing.0.0 = as.character(sleep_daytime_dozing.0.0)
-    ) %>%
-    
-    mutate(
-      
-      # Sleep duration (<7 or >8 hours = unhealthy)
-      sleep_duration_score = case_when(
-        sleep_duration.0.0 < 7 ~ 1,
-        sleep_duration.0.0 > 8 ~ 1,
-        sleep_duration.0.0 >= 7 & sleep_duration.0.0 <= 8 ~ 0,
-        TRUE ~ NA_real_
-      ),
-      
-      # Chronotype
-      sleep_chronotype_score = case_when(
-        sleep_chronotype.0.0 %in% c(
-          "More an 'evening' than a 'morning' person",
-          "Definitely an 'evening' person"
-        ) ~ 1,
-        sleep_chronotype.0.0 %in% c(
-          "Definitely a 'morning' person",
-          "More a 'morning' than 'evening' person"
-        ) ~ 0,
-        TRUE ~ NA_real_
-      ),
-      
-      # Insomnia
-      sleep_insomnia_score = case_when(
-        sleep_insomnia.0.0 %in% c("Sometimes", "Usually") ~ 1,
-        sleep_insomnia.0.0 == "Never/rarely" ~ 0,
-        TRUE ~ NA_real_
-      ),
-      
-      # Snoring
-      sleep_snore_score = case_when(
-        sleep_snore.0.0 == "Yes" ~ 1,
-        sleep_snore.0.0 == "No" ~ 0,
-        TRUE ~ NA_real_
-      ),
-      
-      # Daytime sleepiness
-      sleep_daytime_score = case_when(
-        sleep_daytime_dozing.0.0 %in% c("Sometimes", "Often", "All of the time") ~ 1,
-        sleep_daytime_dozing.0.0 == "Never/rarely" ~ 0,
-        TRUE ~ NA_real_
-      ),
-      
-      # Total score
-      sleep_score = sleep_duration_score +
-        sleep_chronotype_score +
-        sleep_insomnia_score +
-        sleep_daytime_score +
-        sleep_snore_score,
-      
-      # Category
-      sleep_category = case_when(
-        sleep_score %in% 0:1 ~ "Healthy",
-        sleep_score %in% 2:3 ~ "Intermediate",
-        sleep_score %in% 4:5 ~ "Poor",
-        TRUE ~ NA_character_
-      )
-    ) %>%
-    
-    # Remove intermediate variables
-    select(
-      -sleep_chronotype.0.0,
-      -sleep_daytime_dozing.0.0,
-      -sleep_duration.0.0,
-      -sleep_insomnia.0.0,
-      -sleep_snore.0.0,
-      -sleep_chronotype_score,
-      -sleep_daytime_score,
-      -sleep_duration_score,
-      -sleep_insomnia_score,
-      -sleep_snore_score,
-      -sleep_score
-    ) %>%
-    
-    # Ordered factor
-    mutate(
-      sleep_category = factor(
-        sleep_category,
-        levels = c("Healthy", "Intermediate", "Poor"),
-        ordered = TRUE
-      )
-    )
-} 
-
-# Run on train and test set
-
-ukb_train <- create_sleep_score(ukb_train)
-ukb_test  <- create_sleep_score(ukb_test)
-
-```
-
-### MET score
-
-MET score calculated based on IPAQ
-
-Walking MET-minutes/week = 3.3 \* walking minutes \* walking days Moderate MET-minutes/week = 4.0 \* moderate-intensity activity minutes \* moderate days Vigorous MET-minutes/week = 8.0 \* vigorous-intensity activity minutes \* vigorous-intensity days Total physical activity MET-minutes/week = sum of Walking + Moderate + Vigorous METminutes/week scores.
-
-```{r}
-### Physical activity MET score
-
-create_met_total <- function(df) {
-  
-  met_vars <- c(
-    "phys_MET_walking.0.0",
-    "phys_MET_moderate_activity.0.0",
-    "phys_MET_vigorous_activity.0.0"
-  )
-  
-  # ensure numeric
-  # df[met_vars] <- lapply(df[met_vars], function(x) as.numeric(as.character(x)))
-  
-  # truncate impossible negative values to 0
-  for (v in met_vars) {
-    df[[v]] <- pmax(df[[v]], 0)
-  }
-  
-  # total MET
-  df <- df %>%
-    mutate(
-      phys_MET_total =
-        phys_MET_walking.0.0 +
-        phys_MET_moderate_activity.0.0 +
-        phys_MET_vigorous_activity.0.0
-    )
-  
-  return(df)
-}
-
-ukb_train <- create_met_total(ukb_train)
-ukb_test  <- create_met_total(ukb_test)
-```
-
-### MH Symptom score
-
-```{r}
-### Mental health symptom score
-
-create_mh_symptom_score <- function(df) {
-  
-  score_map <- c(
-    "Not at all" = 0,
-    "Several days" = 1,
-    "More than half the days" = 2,
-    "Nearly every day" = 3
-  )
-  
-  df <- df %>%
-    mutate(
-      mh_depression_score   = unname(score_map[as.character(mh_frequency_depression_2_weeks.0.0)]),
-      mh_tenseness_score    = unname(score_map[as.character(mh_frequency_tenseness_2_weeks.0.0)]),
-      mh_tiredness_score    = unname(score_map[as.character(mh_frequency_tiredness_2_weeks.0.0)]),
-      mh_unenthusiasm_score = unname(score_map[as.character(mh_frequency_unenthusiasm_2_weeks.0.0)]),
-      
-      mh_symptom_score =
-        mh_depression_score +
-        mh_tenseness_score +
-        mh_tiredness_score +
-        mh_unenthusiasm_score
-    ) %>%
-    select(
-      -mh_frequency_depression_2_weeks.0.0,
-      -mh_frequency_tenseness_2_weeks.0.0,
-      -mh_frequency_tiredness_2_weeks.0.0,
-      -mh_frequency_unenthusiasm_2_weeks.0.0,
-      -mh_depression_score,
-      -mh_tenseness_score,
-      -mh_tiredness_score,
-      -mh_unenthusiasm_score
-    )
-  
-  return(df)
-}
-
-ukb_train <- create_mh_symptom_score(ukb_train)
-ukb_test  <- create_mh_symptom_score(ukb_test)
-```
-
-## 5) Categories
-
-### Alcohol and BMI cats
-
-```{r, alc_bmi}
-
-process_alcohol_bmi <- function(df) {
-  
-  df %>%
-    mutate(
-      
-      #aclohol categories
-      alcohol_category = case_when(
-        
-        # Never drinkers
-        alc_freq.0.0 == "Never" ~ "Non-drinker",
-        alc_status.0.0 == "Never" ~ "Non-drinker",
-        
-        # Former drinkers
-        alc_status.0.0 == "Previous" ~ "Former",
-        
-        # Current drinkers by frequency
-        alc_status.0.0 == "Current" &
-          alc_freq.0.0 %in% c("Special occasions only",
-                              "One to three times a month") ~ "Social drinker",
-        
-        alc_status.0.0 == "Current" &
-          alc_freq.0.0 == "Once or twice a week" ~ "Moderate drinker",
-        
-        alc_status.0.0 == "Current" &
-          alc_freq.0.0 %in% c("Three or four times a week",
-                              "Daily or almost daily") ~ "Daily drinker",
-        
-        TRUE ~ NA_character_
-      ),
-      
-      # bmi cats
-      bmi = cut(
-        bmi.0.0,
-        breaks = c(-Inf, 18.5, 25, 30, 40, Inf),
-        labels = c(
-          "Underweight (<18.5)",
-          "Normal weight (18.5–24.9)",
-          "Overweight (25–29.9)",
-          "Obese (30–39.9)",
-          "Severely obese (≥40)"
-        ),
-        right = FALSE
-      )
-    ) %>%
-    
-# drop original cols
-  select(-bmi.0.0, -alc_freq.0.0, -alc_status.0.0,)
-}  
-ukb_train <- process_alcohol_bmi(ukb_train)
-ukb_test  <- process_alcohol_bmi(ukb_test)
-```
-
-### Employment cats & one hot encoding
-
-```{r, employment}
-process_employment <- function(df) {
-  
-  emp_col <- "ses_current_employment_status.0.6"
-  
-  if (!emp_col %in% names(df)) {
-    stop("Employment column not found.")
-  }
-  
-  # Ensure character
-  emp_chr <- as.character(df[[emp_col]])
-  
-  # Collapse categories
-  employment_collapsed <- case_when(
-    emp_chr == "In paid employment or self-employed" ~ 
-      "in_paid_employment_or_self_employed",
-    
-    emp_chr == "Retired" ~ 
-      "retired",
-    
-    !is.na(emp_chr) ~ 
-      "other",
-    
-    TRUE ~ NA_character_
-  )
-  
-  df$employment_collapsed <- employment_collapsed
-  
-  # One hot encoding
-  categories <- c(
-    "in_paid_employment_or_self_employed",
-    "retired",
-    "other"
-  )
-  
-  onehot <- sapply(categories, function(cat) {
-    as.integer(df$employment_collapsed == cat)
-  })
-  
-  colnames(onehot) <- paste0("emp_", categories)
-  
-  df <- bind_cols(df, as.data.frame(onehot))
-  
-  df <- df%>%
-    select(-employment_collapsed, -ses_current_employment_status.0.6)
-  
-  return(df)
-}
-
-ukb_train <- process_employment(ukb_train)
-ukb_test  <- process_employment(ukb_test)
-
-```
-
-### Reorder
-
-```{r}
-reorder_cols <- function(df){
-
-  first_cols <- c("eid", "cvd_event", "cvd_date")
-
-  other_cols <- setdiff(names(df), first_cols)
-
-  df %>%
-    select(all_of(first_cols), all_of(sort(other_cols)))
-
-}
-
-ukb_train <- reorder_cols(ukb_train)
-ukb_test  <- reorder_cols(ukb_test)
-```
-
-## 6) Table 1
 ```{r}
 # ---- helper functions ----
 fmt_mean_sd <- function(x, digits = 1) {
@@ -1039,18 +365,14 @@ table1_df <- do.call(rbind, table1_list)
 print(table1_df, row.names = FALSE)
 
 # export
-write.csv(table1_df, "../pipeline_outputs/Table1_imputed.csv", row.names = FALSE)
+write.csv(table1_df, "pipeline_outputs/Table1_imputed.csv", row.names = FALSE)
 ```
 
-## 7) Correlation/colinearity checks
-```{r}
+## 4) Manhattan plot
 
-```
-
-## 8) Manhattan plot
 ```{r}
 outcome <- "cvd_event"
-covars  <- c("age_recr.0.0", "sex.0.0", "ethnicity.0.0",'bmi','sbp_avg','dbp_avg')
+covars  <- c("age_recr.0.0", "sex.0.0", "ethnicity.0.0",'bmi.0.0','sbp_avg','dbp_avg')
 stopifnot(outcome %in% names(ukb_train), all(covars %in% names(ukb_train)))
 ukb_train[[outcome]] <- as.integer(ukb_train[[outcome]])
 
@@ -1205,6 +527,912 @@ p_manhattan <- ggplot(res2, aes(x = pos, y = neglog10p, color = domain)) +
 
 ```
 
+## 5) External exposome correlation analysis
+
+Completing correlation analysis of the external exposome on train dataset before edits to check "raw" correlations between vars
+
+#### Correlation analysis heatmap
+
+```{r}
+
+# Association functions 
+
+cramers_v <- function(x, y){
+  tab <- table(x,y)
+  if(nrow(tab) < 2 || ncol(tab) < 2) return(NA_real_)
+  chi <- suppressWarnings(chisq.test(tab, correct=FALSE))
+  n <- sum(tab)
+  k <- min(nrow(tab), ncol(tab))
+  sqrt(as.numeric(chi$statistic)/(n*(k-1)))
+}
+
+eta_correlation <- function(y, x){
+  x <- as.factor(x)
+  if(!is.numeric(y) || sd(y, na.rm=TRUE)==0 || length(unique(x[!is.na(x)]))<=1) return(NA_real_)
+  grand_mean <- mean(y, na.rm=TRUE)
+  group_stats <- split(y,x)
+  group_stats <- group_stats[lengths(group_stats) > 0]
+  ss_between <- sum(sapply(group_stats, function(g) length(g)*(mean(g,na.rm=TRUE)-grand_mean)^2))
+  ss_total <- sum((y-grand_mean)^2, na.rm=TRUE)
+  if(ss_total==0) return(NA_real_)
+  sqrt(ss_between/ss_total)
+}
+
+association_matrix <- function(df){
+  num_vars <- names(df)[sapply(df,is.numeric)]
+  cat_vars <- names(df)[sapply(df,is.factor)]
+  
+  # Numeric correlations
+  cor_num <- if(length(num_vars) > 1) cor(df[num_vars], use="pairwise.complete.obs") else NULL
+  
+  # Categorical correlations
+  cramer_matrix <- NULL
+  if(length(cat_vars) > 1){
+    cramer_matrix <- matrix(NA_real_, length(cat_vars), length(cat_vars), dimnames=list(cat_vars, cat_vars))
+    for(i in seq_along(cat_vars)){
+      for(j in i:length(cat_vars)){
+        val <- if(i==j) 1 else cramers_v(df[[cat_vars[i]]], df[[cat_vars[j]]])
+        cramer_matrix[i,j] <- val
+        cramer_matrix[j,i] <- val
+      }
+    }
+  }
+  
+  # Numeric vs categorical correlations
+  num_cat_matrix <- NULL
+  if(length(num_vars) > 0 && length(cat_vars) > 0){
+    num_cat_matrix <- matrix(NA_real_, length(num_vars), length(cat_vars), dimnames=list(num_vars, cat_vars))
+    for(i in seq_along(num_vars)){
+      for(j in seq_along(cat_vars)){
+        num_cat_matrix[i,j] <- eta_correlation(df[[num_vars[i]]], df[[cat_vars[j]]])
+      }
+    }
+  }
+  
+  # Combine matrices
+  top <- if(!is.null(cor_num) && !is.null(num_cat_matrix)) cbind(cor_num, num_cat_matrix) else cor_num
+  bottom <- if(!is.null(cramer_matrix) && !is.null(num_cat_matrix)) cbind(t(num_cat_matrix), cramer_matrix) else cramer_matrix
+  assoc_mat <- if(!is.null(top) && !is.null(bottom)) rbind(top, bottom) else if(!is.null(top)) top else bottom
+  
+  # Remove invalid variables
+  if(!is.null(assoc_mat)){
+    bad_vars <- rownames(assoc_mat)[apply(assoc_mat, 1, function(x) any(is.na(x) | is.nan(x) | is.infinite(x)))]
+    if(length(bad_vars) > 0){
+      assoc_mat <- assoc_mat[!rownames(assoc_mat) %in% bad_vars, !colnames(assoc_mat) %in% bad_vars, drop=FALSE]
+    }
+    if(nrow(assoc_mat) == ncol(assoc_mat) && nrow(assoc_mat) > 0) diag(assoc_mat) <- 1
+  }
+  
+  return(as.matrix(assoc_mat))
+}
+
+# Prepare combined dataframe 
+
+domain_list <- list(
+  lifestyle = train %>% select(matches("^(alc|diet|phys|sed|smoke|sleep)")),
+  socioeconomic = train %>% select(matches("^(ses|emp)"), qualification.0.5, imd, ethnicity.0.0),
+  psychosocial = train %>% select(matches("^mh")),
+  environmental = train %>% select(matches("^env"))
+)
+
+# Convert characters to factors
+domain_list <- lapply(domain_list, function(df){
+  df[] <- lapply(df, function(x) if(is.character(x)) as.factor(x) else x)
+  df
+})
+
+# Combine domains
+big_df <- as.data.frame(bind_cols(domain_list))
+
+# Compute association matrix
+assoc_big <- association_matrix(big_df)
+
+# Plot combined heatmap 
+png("all_domains_association_heatmap.png", width=4000, height=4000, res=300)
+corrplot(
+  assoc_big,
+  method="color",
+  type="upper",
+  order="hclust",
+  col=colorRampPalette(c("#3B4CC0","white","#B40426"))(200),
+  tl.cex=0.6,
+  tl.col="black",
+  cl.cex=0.8,
+  diag=FALSE
+)
+
+title(main="All domains mixed-type association heatmap")
+dev.off()
+
+# Convert association matrix to long format
+assoc_long <- as.data.frame(as.table(assoc_big))
+names(assoc_long) <- c("Variable1", "Variable2", "Association")
+
+# Remove self-correlations and duplicates
+assoc_long <- assoc_long %>%
+  filter(Variable1 != Variable2) %>%
+  filter(as.character(Variable1) < as.character(Variable2))
+
+# Define thresholds
+thresholds <- c(0.5, 0.7, 0.9)
+
+# Loop over thresholds and save CSVs
+for(thresh in thresholds){
+  strong_df <- assoc_long %>%
+    filter(abs(Association) >= thresh) %>%
+    arrange(desc(abs(Association)))
+  
+  # Print top 30 to console
+  cat(paste0("\nAssociations ≥ ", thresh, "\n"))
+  print(head(strong_df, 30))
+  
+  # Save to CSV
+  write.csv(
+    strong_df,
+    file = paste0("strong_associations_", gsub("\\.", "", thresh*100), ".csv"),
+    row.names = FALSE
+  )
+}
+
+```
+
+#### Baseline vars analysis
+
+```{r, baseline}
+
+# analysing baseline vars relationship
+
+# Subset data for variables of interest
+plot_df <- train %>%
+  select(age_recr.0.0, bmi.0.0, sbp_avg, dbp_avg, sex.0.0) %>%  # adjust variable names if needed
+  filter(!is.na(age_recr.0.0) & !is.na(bmi.0.0) & !is.na(sbp_avg) & !is.na(dbp_avg) & !is.na(sex.0.0))
+
+# Ensure Sex is factor
+plot_df$sex.0.0 <- as.factor(plot_df$sex.0.0)
+
+
+# Create pair plot (scatterplot matrix with densities)
+
+pair_plot <- ggpairs(
+  plot_df,
+  columns = 1:4,          # numeric columns for scatterplot matrix
+  aes(color = sex.0.0, alpha = 0.4),
+  upper = list(continuous = wrap("points", size = 0.5)),
+  lower = list(continuous = wrap("points", size = 0.5)),
+  diag = list(continuous = wrap("densityDiag", alpha = 0.5))
+) +
+  theme_bw() +
+  theme(
+    strip.text = element_text(size = 10),
+    axis.text = element_text(size = 8),
+    legend.position = "bottom"
+  )
+
+
+# Save to file
+ggsave("age_bmi_sbp_dbp_pairs.png", pair_plot, width = 10, height = 10, dpi = 300)
+
+# Display plot
+pair_plot
+
+```
+
+#### Edit dataset to deal with high colinearity (>=0.75)
+
+```{r}
+strong_075 <- assoc_long %>%
+  filter(abs(Association)>=0.75) %>%
+  arrange(desc(abs(Association)))
+
+cat("\nAssociations ≥ 0.75\n")
+print(head(strong_075,30))
+
+```
+
+## 6) One hot encoding & deterministic recoding of categorical vars
+
+#### Mh_activities
+
+one hot encoding
+
+```{r, mh_activities}
+
+train_v1 <- ukb_train
+test_v1 <- ukb_test
+
+
+process_mh_activities <- function(df) {
+  
+  # Identify target columns
+  mh_cols_target <- paste0("mh_activities.0.", 0:4)
+  mh_cols_present <- mh_cols_target[mh_cols_target %in% names(df)]
+  
+  if (length(mh_cols_present) == 0) {
+    stop("No mh_activities columns found.")
+  }
+  
+  # Convert to character matrix
+  mh_mat_chr <- as.matrix(
+    df[, mh_cols_present, drop = FALSE] %>%
+      mutate(across(everything(), as.character))
+  )
+  
+  # Collect unique codes
+  all_codes <- sort(unique(c(mh_mat_chr)))
+  all_codes <- all_codes[!is.na(all_codes)]
+  
+  # Safe column name helper
+  safe_code_name <- function(x) {
+    x <- as.character(x)
+    x <- tolower(x)
+    x <- gsub("[^A-Za-z0-9]+", "_", x)
+    x <- gsub("^_+|_+$", "", x)
+    x
+  }
+  
+  onehot_names <- paste0("mh_activities_", safe_code_name(all_codes))
+  
+  # Build one-hot matrix
+  onehot <- matrix(
+    0L,
+    nrow = nrow(df),
+    ncol = length(all_codes),
+    dimnames = list(NULL, onehot_names)
+  )
+  
+  for (j in seq_along(all_codes)) {
+    code <- all_codes[j]
+    onehot[, j] <- as.integer(rowSums(mh_mat_chr == code, na.rm = TRUE) > 0)
+  }
+  
+  # Bind to df
+  df <- bind_cols(df, as.data.frame(onehot))
+  
+  # Drop original array columns
+  df <- df %>%
+    select(-all_of(mh_cols_present))
+  
+  return(df)
+}
+
+train_v1 <- process_mh_activities(train_v1)
+test_v1  <- process_mh_activities(test_v1)
+
+```
+
+deterministic recoding
+
+```{r, mh_activities_dr}
+mh_exclusive <- function(df) {
+  
+  # Identify mh one-hot columns
+  mh_cols <- grep("^mh_activities_", names(df), value = TRUE)
+  
+  none_col <- "mh_activities_none_of_the_above"
+  pna_col  <- "mh_activities_prefer_not_to_answer"
+  
+  # Only operate on columns that actually exist
+  existing_special <- intersect(c(none_col, pna_col), names(df))
+  other_cols <- setdiff(mh_cols, existing_special)
+  
+  # Apply exclusivity safely
+  if (none_col %in% names(df)) {
+    idx_none <- df[[none_col]] == 1
+    df[idx_none, other_cols] <- 0
+  }
+  
+  if (pna_col %in% names(df)) {
+    idx_pna <- df[[pna_col]] == 1
+    df[idx_pna, other_cols] <- 0
+  }
+  
+  return(df)
+}
+
+train_v1 <- mh_exclusive(train_v1)
+test_v1  <- mh_exclusive(test_v1)
+```
+
+### Medication prch
+
+One hot encoding & deterministic
+
+```{r, med_prch}
+process_med_prch <- function(df) {
+  
+  
+  # Identify array columns
+  med_cols_target <- paste0("med_pain_relief_constipation_heartburn.0.", 0:5)
+  med_cols_present <- med_cols_target[med_cols_target %in% names(df)]
+  
+  if (length(med_cols_present) == 0) {
+    stop("No med_pain_relief_constipation_heartburn.0.* columns found.")
+  }
+  
+  # Convert to character matrix
+  med_mat_chr <- as.matrix(
+    df[, med_cols_present, drop = FALSE] %>%
+      mutate(across(everything(), as.character))
+  )
+  
+  # Collect unique codes
+  all_codes <- sort(unique(c(med_mat_chr)))
+  all_codes <- all_codes[!is.na(all_codes)]
+  
+  # Safe name helper
+  safe_code_name <- function(x) {
+    x <- str_trim(x)
+    x <- str_to_lower(x)
+    x <- gsub("[^a-z0-9]+", "_", x)
+    x <- gsub("^_+|_+$", "", x)
+    x
+  }
+  
+  onehot_names <- paste0("med_prch_", safe_code_name(all_codes))
+  
+  # Build one-hot matrix
+  onehot <- matrix(
+    0L,
+    nrow = nrow(df),
+    ncol = length(all_codes),
+    dimnames = list(NULL, onehot_names)
+  )
+  
+  for (j in seq_along(all_codes)) {
+    code <- all_codes[j]
+    onehot[, j] <- as.integer(rowSums(med_mat_chr == code, na.rm = TRUE) > 0)
+  }
+  
+  df <- bind_cols(df, as.data.frame(onehot))
+  
+  # Rename specific columns safely
+  rename_map <- c(
+    "med_prch_ibuprofen_e_g_nurofen" = "med_prch_ibuprofen",
+    "med_prch_laxatives_e_g_dulcolax_senokot" = "med_prch_laxatives",
+    "med_prch_omeprazole_e_g_zanprol" = "med_prch_omeprazole",
+    "med_prch_ranitidine_e_g_zantac" = "med_prch_ranitidine"
+  )
+  
+  for (old in names(rename_map)) {
+    if (old %in% names(df)) {
+      names(df)[names(df) == old] <- rename_map[[old]]
+    }
+  }
+  
+  # Enforce exclusivity
+  none_col <- "med_prch_none_of_the_above"
+  prch_cols <- grep("^med_prch_", names(df), value = TRUE)
+  
+  if (none_col %in% names(df)) {
+    other_cols <- setdiff(prch_cols, none_col)
+    idx_none <- df[[none_col]] == 1
+    df[idx_none, other_cols] <- 0
+  }
+  
+  # Drop original array columns
+  df <- df %>%
+    select(-all_of(med_cols_present))
+  
+  return(df)
+}
+
+train_v1 <- process_med_prch(train_v1)
+test_v1  <- process_med_prch(test_v1)
+```
+
+### Medication chol/bp/diabetes/hormone
+
+One hot encoding & deterministic recoding
+
+```{r, med_cbpd}
+
+# Apply one hot encoding
+process_cbpd_meds <- function(df)  {
+  
+  # Identify cols
+  
+  med_cols_male <- grep("^med_chol_bp_diabetes\\.0\\.[0-2]+$",
+                        names(df), value = TRUE)
+  
+  med_cols_female <- grep("^med_chol_bp_diabetes_hormones\\.0\\.[0-3]+$",
+                          names(df), value = TRUE)
+  
+  med_cols_present <- c(med_cols_male, med_cols_female)
+  
+  if (length(med_cols_present) == 0) {
+    stop("No medication columns found.")
+  }
+  
+  med_mat <- df[, med_cols_present, drop = FALSE] %>%
+    mutate(across(everything(), as.character))
+  
+  med_mat_chr <- as.matrix(med_mat)
+  
+  all_codes <- sort(unique(c(med_mat_chr)))
+  all_codes <- all_codes[!is.na(all_codes)]
+  
+  safe_code_name <- function(x) {
+    x <- as.character(x)
+    x <- str_trim(x)
+    x <- str_to_lower(x)
+    x <- gsub("[^a-z0-9]+", "_", x)
+    x <- gsub("^_+|_+$", "", x)
+    x
+  }
+  
+  onehot_names <- paste0("med_cbd_", safe_code_name(all_codes))
+  
+  onehot <- matrix(
+    0L,
+    nrow = nrow(med_mat_chr),
+    ncol = length(all_codes),
+    dimnames = list(NULL, onehot_names)
+  )
+  
+  for (j in seq_along(all_codes)) {
+    code <- all_codes[j]
+    onehot[, j] <- as.integer(rowSums(med_mat_chr == code, na.rm = TRUE) > 0)
+  }
+  
+  df <- bind_cols(df, as.data.frame(onehot))
+  
+# Enforce exclusivity (if answer is "None of the above" ensures all meds are 0)
+  
+  mh_cols <- grep("^med_cbd_", names(df), value = TRUE)
+  none_col <- "med_cbd_none_of_the_above"
+  other_cols <- setdiff(mh_cols, none_col)
+  
+  if (none_col %in% names(df)) {
+    idx_none <- df[[none_col]] == 1
+    df[idx_none, other_cols] <- 0
+  }
+  
+  # Drop original arrays
+  
+  df <- df %>%
+    select(-all_of(med_cols_present))
+  
+  return(df)
+  }
+
+train_v1 <- process_cbpd_meds(train_v1)
+test_v1  <- process_cbpd_meds(test_v1)
+```
+
+## 7) Score creation
+
+### Diet score
+
+```{r, diet}
+process_diet <- function(df) {
+  
+  library(data.table)
+  
+  # Ensure we are working with data.table
+  if (!"data.table" %in% class(df)) df <- as.data.table(df)
+  
+  # Convert fruit/veg to numeric
+  fv_to_num <- function(x) {
+    x <- trimws(as.character(x))
+    x[x %in% c("Less than once", "Less than one")] <- "0"
+    suppressWarnings(as.numeric(x))
+  }
+  
+  freq_to_week <- function(x) {
+    x <- as.character(x)
+    out <- rep(NA_real_, length(x))
+    out[x == "Never"] <- 0
+    out[x == "Less than once a week"] <- 0.5
+    out[x == "Once a week"] <- 1
+    out[x == "2-4 times a week"] <- 3
+    out[x == "5-6 times a week"] <- 5.5
+    out[x == "Once or more daily"] <- 7
+    out
+  }
+  
+  df[, fv_fresh  := fv_to_num(diet_fresh_fruit_intake.0.0)]
+  df[, fv_dried  := fv_to_num(diet_dried_fruit_intake.0.0)]
+  df[, fv_cooked := fv_to_num(diet_cooked_veg_intake.0.0)]
+  df[, fv_raw    := fv_to_num(diet_raw_veg_intake.0.0)]
+  
+  # Totals
+  df[, diet_total_fish_intake :=
+       freq_to_week(diet_oily_fish_intake.0.0) +
+       freq_to_week(diet_non_oily_fish_intake.0.0)]
+  
+  df[, diet_total_red_meat_intake :=
+       freq_to_week(diet_lamb_mutton_intake.0.0) +
+       freq_to_week(diet_beef_intake.0.0) +
+       freq_to_week(diet_pork_intake.0.0)]
+  
+  df[, diet_total_fruit_veg_intake := fv_fresh + fv_dried + fv_cooked + fv_raw]
+  
+  # Dichotomise 
+  df[, risk_fruit_veg :=
+       fifelse(diet_total_fruit_veg_intake >= 5, 0, 1)]
+  
+  df[, risk_fish :=
+       fifelse(diet_total_fish_intake >= 2, 0, 1)]
+  
+  df[, risk_processed_meat :=
+       fifelse(freq_to_week(diet_processed_meat_intake.0.0) <= 1, 0, 1)]
+  
+  df[, risk_red_meat :=
+       fifelse(diet_total_red_meat_intake <= 1, 0, 1)]
+  
+  df[, risk_milk :=
+       fifelse(diet_milk_type.0.0 %in% c("Semi-skimmed", "Skimmed"), 0, 1)]
+  
+  df[, risk_spread :=
+       fifelse(diet_spread_type.0.0 == "Never/rarely", 0, 1)]
+  
+  df[, risk_salt :=
+       fifelse(diet_salt_added_food.0.0 == "Never/rarely", 0, 1)]
+  
+  df[, risk_cereal :=
+       fifelse(as.numeric(diet_cereal_intake.0.0) > 5, 0, 1)]
+  
+  df[, risk_water :=
+       fifelse(as.numeric(diet_water_intake.0.0) >= 6, 0, 1)]
+  
+  # Total dietary risk score 
+  df[, diet_risk_score :=
+       risk_fruit_veg +
+       risk_fish +
+       risk_processed_meat +
+       risk_red_meat +
+       risk_milk +
+       risk_spread +
+       risk_salt +
+       risk_cereal +
+       risk_water]
+  
+  df <- df %>%
+    select(-starts_with("risk_"), -starts_with("diet_total_f"), -starts_with("fv_"), -diet_total_red_meat_intake)
+  
+  return(df)
+}
+
+train_v1 <- process_diet(train_v1)
+test_v1  <- process_diet(test_v1)
+
+```
+
+### Sleep score
+
+```{r, sleep}
+# Use 5 sleep factors: 
+# "sleep_daytime_dozing.0.0" <- "Sometimes", "Often", "All of the time" ~ 1, "Never/rarely" ~ 0
+# "sleep_insomnia.0.0" <- "Sometimes", "Usually" ~ 1, "Never/rarely" ~ 0
+# "sleep_snore.0.0" <- "Yes" ~ 1, "No" ~ 0 
+# "sleep_chronotype.0.0" <- "More an 'evening' than a 'morning' person" | "Definitely an 'evening' person" ~ 1, "Definitely a 'morning' person" | "More a 'morning' than 'evening' person" ~ 0
+# "sleep_duration.0.0" <- <7 | > 8 ~ 1, >=7 | <=8  ~ 0
+
+
+create_sleep_score <- function(df) {
+  
+  df %>%
+    
+    # Ensure correct types first
+    mutate(
+      sleep_duration.0.0 = as.numeric(as.character(sleep_duration.0.0)),
+      sleep_chronotype.0.0 = as.character(sleep_chronotype.0.0),
+      sleep_insomnia.0.0 = as.character(sleep_insomnia.0.0),
+      sleep_snore.0.0 = as.character(sleep_snore.0.0),
+      sleep_daytime_dozing.0.0 = as.character(sleep_daytime_dozing.0.0)
+    ) %>%
+    
+    mutate(
+      
+      # Sleep duration (<7 or >8 hours = unhealthy)
+      sleep_duration_score = case_when(
+        sleep_duration.0.0 < 7 ~ 1,
+        sleep_duration.0.0 > 8 ~ 1,
+        sleep_duration.0.0 >= 7 & sleep_duration.0.0 <= 8 ~ 0,
+        TRUE ~ NA_real_
+      ),
+      
+      # Chronotype
+      sleep_chronotype_score = case_when(
+        sleep_chronotype.0.0 %in% c(
+          "More an 'evening' than a 'morning' person",
+          "Definitely an 'evening' person"
+        ) ~ 1,
+        sleep_chronotype.0.0 %in% c(
+          "Definitely a 'morning' person",
+          "More a 'morning' than 'evening' person"
+        ) ~ 0,
+        TRUE ~ NA_real_
+      ),
+      
+      # Insomnia
+      sleep_insomnia_score = case_when(
+        sleep_insomnia.0.0 %in% c("Sometimes", "Usually") ~ 1,
+        sleep_insomnia.0.0 == "Never/rarely" ~ 0,
+        TRUE ~ NA_real_
+      ),
+      
+      # Snoring
+      sleep_snore_score = case_when(
+        sleep_snore.0.0 == "Yes" ~ 1,
+        sleep_snore.0.0 == "No" ~ 0,
+        TRUE ~ NA_real_
+      ),
+      
+      # Daytime sleepiness
+      sleep_daytime_score = case_when(
+        sleep_daytime_dozing.0.0 %in% c("Sometimes", "Often", "All of the time") ~ 1,
+        sleep_daytime_dozing.0.0 == "Never/rarely" ~ 0,
+        TRUE ~ NA_real_
+      ),
+      
+      # Total score
+      sleep_score = sleep_duration_score +
+        sleep_chronotype_score +
+        sleep_insomnia_score +
+        sleep_daytime_score +
+        sleep_snore_score,
+      
+      # Category
+      sleep_category = case_when(
+        sleep_score %in% 0:1 ~ "Healthy",
+        sleep_score %in% 2:3 ~ "Intermediate",
+        sleep_score %in% 4:5 ~ "Poor",
+        TRUE ~ NA_character_
+      )
+    ) %>%
+    
+    # Remove intermediate variables
+    select(
+      -sleep_chronotype.0.0,
+      -sleep_daytime_dozing.0.0,
+      -sleep_duration.0.0,
+      -sleep_insomnia.0.0,
+      -sleep_snore.0.0,
+      -sleep_chronotype_score,
+      -sleep_daytime_score,
+      -sleep_duration_score,
+      -sleep_insomnia_score,
+      -sleep_snore_score,
+      -sleep_score
+    ) %>%
+    
+    # Ordered factor
+    mutate(
+      sleep_category = factor(
+        sleep_category,
+        levels = c("Healthy", "Intermediate", "Poor"),
+        ordered = TRUE
+      )
+    )
+} 
+
+# Run on train and test set
+
+train_v1 <- create_sleep_score(train_v1)
+test_v1  <- create_sleep_score(test_v1)
+
+```
+
+### MET score
+
+MET score calculated based on IPAQ
+
+Walking MET-minutes/week = 3.3 \* walking minutes \* walking days Moderate MET-minutes/week = 4.0 \* moderate-intensity activity minutes \* moderate days Vigorous MET-minutes/week = 8.0 \* vigorous-intensity activity minutes \* vigorous-intensity days Total physical activity MET-minutes/week = sum of Walking + Moderate + Vigorous METminutes/week scores.
+
+```{r}
+### Physical activity MET score
+
+create_met_total <- function(df) {
+  
+  met_vars <- c(
+    "phys_MET_walking.0.0",
+    "phys_MET_moderate_activity.0.0",
+    "phys_MET_vigorous_activity.0.0"
+  )
+  
+  # ensure numeric
+  # df[met_vars] <- lapply(df[met_vars], function(x) as.numeric(as.character(x)))
+  
+  # truncate impossible negative values to 0
+  for (v in met_vars) {
+    df[[v]] <- pmax(df[[v]], 0)
+  }
+  
+  # total MET
+  df <- df %>%
+    mutate(
+      phys_MET_total =
+        phys_MET_walking.0.0 +
+        phys_MET_moderate_activity.0.0 +
+        phys_MET_vigorous_activity.0.0
+    )
+  
+  return(df)
+}
+
+train_v1 <- create_met_total(train_v1)
+test_v1  <- create_met_total(test_v1)
+```
+
+### MH Symptom score
+
+```{r}
+### Mental health symptom score
+
+create_mh_symptom_score <- function(df) {
+  
+  score_map <- c(
+    "Not at all" = 0,
+    "Several days" = 1,
+    "More than half the days" = 2,
+    "Nearly every day" = 3
+  )
+  
+  df <- df %>%
+    mutate(
+      mh_depression_score   = unname(score_map[as.character(mh_frequency_depression_2_weeks.0.0)]),
+      mh_tenseness_score    = unname(score_map[as.character(mh_frequency_tenseness_2_weeks.0.0)]),
+      mh_tiredness_score    = unname(score_map[as.character(mh_frequency_tiredness_2_weeks.0.0)]),
+      mh_unenthusiasm_score = unname(score_map[as.character(mh_frequency_unenthusiasm_2_weeks.0.0)]),
+      
+      mh_symptom_score =
+        mh_depression_score +
+        mh_tenseness_score +
+        mh_tiredness_score +
+        mh_unenthusiasm_score
+    ) %>%
+    select(
+      -mh_frequency_depression_2_weeks.0.0,
+      -mh_frequency_tenseness_2_weeks.0.0,
+      -mh_frequency_tiredness_2_weeks.0.0,
+      -mh_frequency_unenthusiasm_2_weeks.0.0,
+      -mh_depression_score,
+      -mh_tenseness_score,
+      -mh_tiredness_score,
+      -mh_unenthusiasm_score
+    )
+  
+  return(df)
+}
+
+train_v1 <- create_mh_symptom_score(train_v1)
+test_v1  <- create_mh_symptom_score(test_v1)
+```
+
+## 8) Categories
+
+### Alcohol and BMI cats
+
+```{r, alc_bmi}
+
+process_alcohol_bmi <- function(df) {
+  
+  df %>%
+    mutate(
+      
+      #aclohol categories
+      alcohol_category = case_when(
+        
+        # Never drinkers
+        alc_freq.0.0 == "Never" ~ "Non-drinker",
+        alc_status.0.0 == "Never" ~ "Non-drinker",
+        
+        # Former drinkers
+        alc_status.0.0 == "Previous" ~ "Former",
+        
+        # Current drinkers by frequency
+        alc_status.0.0 == "Current" &
+          alc_freq.0.0 %in% c("Special occasions only",
+                              "One to three times a month") ~ "Social drinker",
+        
+        alc_status.0.0 == "Current" &
+          alc_freq.0.0 == "Once or twice a week" ~ "Moderate drinker",
+        
+        alc_status.0.0 == "Current" &
+          alc_freq.0.0 %in% c("Three or four times a week",
+                              "Daily or almost daily") ~ "Daily drinker",
+        
+        TRUE ~ NA_character_
+      ),
+      
+      # bmi cats
+      bmi = cut(
+        bmi.0.0,
+        breaks = c(-Inf, 18.5, 25, 30, 40, Inf),
+        labels = c(
+          "Underweight (<18.5)",
+          "Normal weight (18.5–24.9)",
+          "Overweight (25–29.9)",
+          "Obese (30–39.9)",
+          "Severely obese (≥40)"
+        ),
+        right = FALSE
+      )
+    ) %>%
+    
+# drop original cols
+  select(-bmi.0.0, -alc_freq.0.0, -alc_status.0.0,)
+}  
+train_v1 <- process_alcohol_bmi(train_v1)
+test_v1  <- process_alcohol_bmi(test_v1)
+```
+
+### Employment cats & one hot encoding
+
+```{r, employment}
+process_employment <- function(df) {
+  
+  emp_col <- "ses_current_employment_status.0.6"
+  
+  if (!emp_col %in% names(df)) {
+    stop("Employment column not found.")
+  }
+  
+  # Ensure character
+  emp_chr <- as.character(df[[emp_col]])
+  
+  # Collapse categories
+  employment_collapsed <- case_when(
+    emp_chr == "In paid employment or self-employed" ~ 
+      "in_paid_employment_or_self_employed",
+    
+    emp_chr == "Retired" ~ 
+      "retired",
+    
+    !is.na(emp_chr) ~ 
+      "other",
+    
+    TRUE ~ NA_character_
+  )
+  
+  df$employment_collapsed <- employment_collapsed
+  
+  # One hot encoding
+  categories <- c(
+    "in_paid_employment_or_self_employed",
+    "retired",
+    "other"
+  )
+  
+  onehot <- sapply(categories, function(cat) {
+    as.integer(df$employment_collapsed == cat)
+  })
+  
+  colnames(onehot) <- paste0("emp_", categories)
+  
+  df <- bind_cols(df, as.data.frame(onehot))
+  
+  df <- df%>%
+    select(-employment_collapsed, -ses_current_employment_status.0.6)
+  
+  return(df)
+}
+
+train_v1 <- process_employment(train_v1)
+test_v1  <- process_employment(test_v1)
+
+```
+
+### Reorder
+
+```{r}
+reorder_cols <- function(df){
+
+  first_cols <- c("eid", "cvd_event", "cvd_date")
+
+  other_cols <- setdiff(names(df), first_cols)
+
+  df %>%
+    select(all_of(first_cols), all_of(sort(other_cols)))
+
+}
+
+train_v1 <- reorder_cols(train_v1)
+test_v1  <- reorder_cols(test_v1)
+```
+
+
 ## 9) External exposome specific dataset
 ```{r}
 outcome <- "cvd_event"
@@ -1220,16 +1448,17 @@ exposome_single <- c(
   "qualification.0.5","alcohol_category","employed"
 )
 
-exposures <- names(ukb_train)[
-  Reduce(`|`, lapply(exposome_prefix, \(p) grepl(p, names(ukb_train)))) |
-    names(ukb_train) %in% exposome_single
+exposures <- names(train_v1)[
+  Reduce(`|`, lapply(exposome_prefix, \(p) grepl(p, names(train_v1)))) |
+    names(train_v1) %in% exposome_single
 ]
 exposures <- setdiff(exposures, drop_cols)
+
 ```
 
 ##### Save
 
 ```{r, save}
-saveRDS(ukb_train, file = "../pipeline_outputs/train_final.rds")
-saveRDS(ukb_test, file = "../pipeline_outputs/test_final.rds")
+saveRDS(train_v1, file = "pipeline_outputs/train_final.rds")
+saveRDS(test_v1, file = "pipeline_outputs/test_final.rds")
 ```

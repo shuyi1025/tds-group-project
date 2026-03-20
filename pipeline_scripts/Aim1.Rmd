@@ -1,0 +1,302 @@
+---
+title: "Aim1"
+output: html_document
+date: "2026-03-20"
+---
+
+# Workflow overview:
+0)  Setup
+1)  Prepare train and test datasets
+2)  LASSO
+3)  Stability selection
+4)  Make onehot encoding datasets with selected variables
+
+
+### 0) Setup
+Load all necessary libraries and datasets
+```{r, libraries}
+library(dplyr)
+library(glmnet)
+library(pROC)
+library(ggplot2)
+library(sharp)
+ukb_train <- readRDS("pipeline_outputs/train_final.rds")
+ukb_test <- readRDS("pipeline_outputs/test_final.rds")
+```
+
+## 1) Define outcome variable and prediction variables
+
+```{r}
+# Outcome must be binary (0/1)
+outcome <- "cvd_event"
+
+drop_cols <- c(
+  "eid", 
+  "date_death.0.0", "date_lost_to_fup.0.0", "date_recr.0.0",
+  "assessment_centre_location.0.0"
+)
+
+drop_cols <- intersect(drop_cols, names(ukb_train))
+
+baseline_covars <- c("age_recr.0.0", "sex.0.0", "ethnicity.0.0",'bmi','sbp_avg','dbp_avg')
+baseline_covars <- intersect(baseline_covars, names(ukb_train))
+
+# keep: external exposome
+external_patterns <- c(
+  "^env_",
+  "^diet_",
+  "^smoke_",
+  "^phys_",
+  "^sed_",
+  "^ses_",
+  "^mh_",
+  "^emp_",
+  "^imd$",
+  "^sleep_category$",
+  "^alcohol_category$",
+  "^qualification\\."
+)
+
+external_vars <- unique(unlist(lapply(external_patterns, function(p) grep(p, names(ukb_train), value = TRUE))))
+
+preds <- unique(c(baseline_covars, external_vars))
+preds <- setdiff(preds, c(outcome, drop_cols))
+```
+
+
+## 2) Prepare training and test datasets
+```{r}
+train_df <- ukb_train %>% select(all_of(c(outcome, preds)))
+test_df  <- ukb_test  %>% select(all_of(c(outcome, preds)))
+
+# Ensure outcome is numeric binary (0/1)
+train_df[[outcome]] <- as.integer(train_df[[outcome]])
+test_df[[outcome]]  <- as.integer(test_df[[outcome]])
+
+y_tr <- train_df[[outcome]]
+y_te <- test_df[[outcome]]
+
+# Convert predictors to model matrix (automatic one-hot encoding)
+X_tr <- model.matrix(
+  as.formula(paste0(outcome, " ~ ", paste(preds, collapse = " + "))),
+  data = train_df
+)
+
+# Remove intercept column
+X_tr <- X_tr[, colnames(X_tr) != "(Intercept)", drop = FALSE]
+
+# Construct test design matrix and align columns with training matrix
+X_te <- model.matrix(
+  as.formula(paste0(outcome, " ~ ", paste(preds, collapse = " + "))),
+  data = test_df
+)
+X_te <- X_te[, colnames(X_te) != "(Intercept)", drop = FALSE]
+
+# Align test matrix columns to match training matrix
+train_cols <- colnames(X_tr)
+missing_cols <- setdiff(train_cols, colnames(X_te))
+extra_cols   <- setdiff(colnames(X_te), train_cols)
+
+# Add missing columns to test matrix (fill with 0)
+if (length(missing_cols) > 0) {
+  X_te <- cbind(
+    X_te,
+    matrix(0, nrow = nrow(X_te), ncol = length(missing_cols),
+           dimnames = list(NULL, missing_cols))
+  )
+}
+
+# Remove extra columns not present in training matrix
+if (length(extra_cols) > 0) {
+  X_te <- X_te[, setdiff(colnames(X_te), extra_cols), drop = FALSE]
+}
+
+# Reorder columns to match training matrix exactly
+X_te <- X_te[, train_cols, drop = FALSE]
+
+# Set up for penalty factor
+escape_regex <- function(x) {
+  gsub("([][{}()+*^$|\\\\?.])", "\\\\\\1", x)
+}
+penalty_factor <- rep(1, ncol(X_tr))
+names(penalty_factor) <- colnames(X_tr)
+
+for (v in baseline_covars) {
+  pat <- paste0("^", escape_regex(v))
+  penalty_factor[grepl(pat, colnames(X_tr))] <- 0
+}
+
+table(penalty_factor)
+```
+
+# 2) Fit cross-validated LASSO logistic regression
+```{r}
+set.seed(123)
+cvfit <- cv.glmnet(
+  x = X_tr,
+  y = y_tr,
+  family = "binomial",     # logistic regression
+  alpha = 1,               # LASSO penalty
+  nfolds = 10,             # 10-fold cross-validation
+  type.measure = "auc",    # choose lambda based on AUC
+  standardize = TRUE,      # standardize predictors internally
+)
+
+lambda_use <- cvfit$lambda.min
+
+# Evaluate performance on test set
+p_te <- as.numeric(
+  predict(cvfit, newx = X_te, s = lambda_use, type = "response")
+)
+
+roc_obj <- pROC::roc(y_te, p_te, quiet = TRUE)
+auc_te  <- as.numeric(pROC::auc(roc_obj))
+
+roc_df <- data.frame(
+  tpr = roc_obj$sensitivities,
+  fpr = 1 - roc_obj$specificities
+)
+
+ggplot(roc_df, aes(x = fpr, y = tpr)) +
+  geom_line(size = 1.2, color = "steelblue") +
+  geom_abline(slope = 1, intercept = 0,
+              linetype = "dashed", color = "grey") +
+  labs(
+    title = "ROC Curve - LASSO Logistic Model",
+    x = "False Positive Rate",
+    y = "True Positive Rate"
+  ) +
+  annotate("text",
+           x = 0.6, y = 0.2,
+           label = paste0("AUC = ", round(auc_te, 3)),
+           size = 5) +
+  theme_minimal(base_size = 14)
+
+
+# Extract selected variables (non-zero coefficients)
+coef_mat <- as.matrix(coef(cvfit, s = lambda_use))
+
+coef_df <- data.frame(
+  term = rownames(coef_mat),
+  beta = as.numeric(coef_mat[, 1]),
+  row.names = NULL
+) %>%
+  filter(term != "(Intercept)", beta != 0) %>%
+  mutate(abs_beta = abs(beta)) %>%
+  arrange(desc(abs_beta))
+
+saveRDS(coef_df, "pipeline_outputs/coef_df.rds")
+```
+
+## 3) Stability selection
+```{r}
+stab <- VariableSelection(
+  xdata = X_tr,
+  ydata = y_tr,
+  family = "binomial",
+  verbose = TRUE,
+  penalty.factor = penalty_factor
+)
+
+saveRDS(stab, "pipeline_outputs/stab.rds")
+
+# Extract results
+sel_prop <- SelectionProportions(stab)
+
+sel_prop_df <- data.frame(
+  variable = names(sel_prop),
+  selection_proportion = as.numeric(sel_prop)
+) %>%
+  arrange(desc(selection_proportion))
+
+# Select variables whose selection_proportion > best_pi
+best <- Argmax(stab)
+best_pi     <- best[1, "pi"]   # 0.52
+
+stable_vars_df <- sel_prop_df %>%
+  filter(selection_proportion > best_pi) %>%
+  arrange(desc(selection_proportion))
+
+saveRDS(sel_prop_df, "pipeline_outputs/stable_vars_df .rds")
+
+# Refit final model on selected variables
+stable_vars <- stable_vars_df$variable
+X_tr_sel <- X_tr[, stable_vars, drop = FALSE]
+X_te_sel <- X_te[, stable_vars, drop = FALSE]
+
+final_cvfit <- cv.glmnet(
+  x = X_tr_sel,
+  y = y_tr,
+  family = 'binomial',
+  alpha = 1,
+  nfolds = 10,
+  type.measure = "auc",
+  standardize = TRUE
+)
+
+test_prob <- as.numeric(
+  predict(final_cvfit, newx = X_te_sel, s = "lambda.min", type = "response")
+)
+
+# Example AUC
+auc_obj <- roc(y_te, test_prob)
+auc(auc_obj)
+
+roc_df <- data.frame(
+  tpr = auc_obj$sensitivities,
+  fpr = 1 - auc_obj$specificities
+)
+
+ggplot(roc_df, aes(x = fpr, y = tpr)) +
+  geom_line(color = "blue", size = 1.2) +
+  geom_abline(linetype = "dashed", color = "grey") +
+  labs(
+    title = paste0("ROC Curve (AUC = ", round(auc(auc_obj), 3), ")"),
+    x = "False Positive Rate",
+    y = "True Positive Rate"
+  ) +
+  theme_minimal()
+```
+
+## 4) Make onehot encoding dataset with selected variables
+```{r}
+train_final_onehot <-  model.matrix(~ . - 1, data = train_final) |> as.data.frame()
+test_final_onehot <- model.matrix(~ . - 1, data = test_final) |> as.data.frame()
+
+selected_vars <- stable_vars_df$variable
+train_baseline_ee_onehot <- train_final_onehot[, selected_vars, drop = FALSE]
+test_baseline_ee_onehot <- test_final_onehot[, selected_vars, drop = FALSE]
+
+onehot_extra <- c(
+  grep("^bmi", names(test_final_onehot), value = TRUE),
+  grep("^sex", names(test_final_onehot), value = TRUE),
+  grep("^ethnicity", names(test_final_onehot), value = TRUE)
+)
+
+other_covars <- c(
+  "eid",
+  "cvd_event",
+  "age_recr.0.0",
+  "sbp_avg",
+  "dbp_avg"
+)
+
+
+train_baseline_ee_onehot <- cbind(
+  train_final_onehot[, other_covars, drop = FALSE],
+  train_final_onehot[, onehot_extra, drop = FALSE],
+  train_baseline_ee_onehot
+)
+
+test_baseline_ee_onehot <- cbind(
+  test_final_onehot[, other_covars, drop = FALSE],
+  test_final_onehot[, onehot_extra, drop = FALSE],
+  test_baseline_ee_onehot
+  
+)
+
+saveRDS(stab, "pipeline_outputs/train_baseline_ee_onehot.rds")
+saveRDS(stab, "pipeline_outputs/test_baseline_ee_onehot.rds")
+
+```
+
