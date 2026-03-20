@@ -41,8 +41,8 @@ library(GGally)
 Load train and test data
 
 ```{r, data}
-ukb_train <- readRDS("pipeline_outputs/ukb_train.rds")
-ukb_test <- readRDS("pipeline_outputs/ukb_test.rds")
+ukb_train <- readRDS("../pipeline_outputs/ukb_train.rds")
+ukb_test <- readRDS("../pipeline_outputs/ukb_test.rds")
 ```
 
 ## 1) Distribution checks
@@ -50,7 +50,7 @@ ukb_test <- readRDS("pipeline_outputs/ukb_test.rds")
 Load data before imputation to compare
 
 ```{r}
-ukb_raw <- readRDS("extraction_and_recoding/outputs/ukb_recoded.rds")
+ukb_raw <- readRDS("../extraction_and_recoding/outputs/ukb_recoded.rds")
 ```
 
 ### Check negative values
@@ -286,7 +286,6 @@ ukb_test <- skip_indicators(ukb_test)
 ```
 
 
-
 ## 3) Table 1
 
 ```{r}
@@ -365,7 +364,7 @@ table1_df <- do.call(rbind, table1_list)
 print(table1_df, row.names = FALSE)
 
 # export
-write.csv(table1_df, "pipeline_outputs/Table1_imputed.csv", row.names = FALSE)
+write.csv(table1_df, "../pipeline_outputs/Table1_imputed.csv", row.names = FALSE)
 ```
 
 ## 4) Manhattan plot
@@ -1459,6 +1458,6 @@ exposures <- setdiff(exposures, drop_cols)
 ##### Save
 
 ```{r, save}
-saveRDS(train_v1, file = "pipeline_outputs/train_final.rds")
-saveRDS(test_v1, file = "pipeline_outputs/test_final.rds")
+saveRDS(train_v1, file = "../pipeline_outputs/train_final.rds")
+saveRDS(test_v1, file = "../pipeline_outputs/test_final.rds")
 ```

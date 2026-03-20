@@ -3,7 +3,9 @@
 #PBS -l select=1:ncpus=128:ompthreads=128:mem=200gb
 #PBS -N imputation
 
+cd pipeline_scripts
+
 eval "$(~/miniforge3/bin/conda shell.bash hook)"
 conda activate r413
 
-Rscript pipeline_scripts/imputation.R
+Rscript imputation.R

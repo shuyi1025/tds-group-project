@@ -20,8 +20,8 @@ library(glmnet)
 library(pROC)
 library(ggplot2)
 library(sharp)
-ukb_train <- readRDS("pipeline_outputs/train_final.rds")
-ukb_test <- readRDS("pipeline_outputs/test_final.rds")
+ukb_train <- readRDS("../pipeline_outputs/train_final.rds")
+ukb_test <- readRDS("../pipeline_outputs/test_final.rds")
 ```
 
 ## 1) Define outcome variable and prediction variables
@@ -185,7 +185,7 @@ coef_df <- data.frame(
   mutate(abs_beta = abs(beta)) %>%
   arrange(desc(abs_beta))
 
-saveRDS(coef_df, "pipeline_outputs/coef_df.rds")
+saveRDS(coef_df, "../pipeline_outputs/coef_df.rds")
 ```
 
 ## 3) Stability selection
@@ -198,7 +198,7 @@ stab <- VariableSelection(
   penalty.factor = penalty_factor
 )
 
-saveRDS(stab, "pipeline_outputs/stab.rds")
+saveRDS(stab, "../pipeline_outputs/stab.rds")
 
 # Extract results
 sel_prop <- SelectionProportions(stab)
@@ -217,7 +217,7 @@ stable_vars_df <- sel_prop_df %>%
   filter(selection_proportion > best_pi) %>%
   arrange(desc(selection_proportion))
 
-saveRDS(sel_prop_df, "pipeline_outputs/stable_vars_df .rds")
+saveRDS(sel_prop_df, "../pipeline_outputs/stable_vars_df.rds")
 
 # Refit final model on selected variables
 stable_vars <- stable_vars_df$variable
@@ -295,8 +295,8 @@ test_baseline_ee_onehot <- cbind(
   
 )
 
-saveRDS(stab, "pipeline_outputs/train_baseline_ee_onehot.rds")
-saveRDS(stab, "pipeline_outputs/test_baseline_ee_onehot.rds")
+saveRDS(stab, "../pipeline_outputs/train_baseline_ee_onehot.rds")
+saveRDS(stab, "../pipeline_outputs/test_baseline_ee_onehot.rds")
 
 ```
 

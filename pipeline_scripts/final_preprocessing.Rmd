@@ -36,7 +36,7 @@ library(stringr)
 Load data
 
 ```{r, data}
-ukb <- readRDS("extraction_and_recoding/outputs/ukb_recoded.rds")
+ukb <- readRDS("../extraction_and_recoding/outputs/ukb_recoded.rds")
 cvd_event <- readRDS("cvd_events.rds")
 ```
 
@@ -592,7 +592,7 @@ Imputed datasets are saved to the designated output directory.
 ##### Save
 
 ```{r, save}
-output_dir <- "pipeline_outputs"
+output_dir <- "../pipeline_outputs"
 dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 
 saveRDS(ukb_v2, file = file.path(output_dir, "ukb_raw.rds"))
