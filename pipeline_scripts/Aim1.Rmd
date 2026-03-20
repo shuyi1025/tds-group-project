@@ -295,8 +295,12 @@ test_baseline_ee_onehot <- cbind(
   
 )
 
-saveRDS(stab, "../pipeline_outputs/train_baseline_ee_onehot.rds")
-saveRDS(stab, "../pipeline_outputs/test_baseline_ee_onehot.rds")
+write.csv(train_baseline_ee_onehot,
+          "../pipeline_scripts/train_baseline_ee_onehot.csv",
+          row.names = FALSE)
+write.csv(train_baseline_ee_onehot,
+          "../pipeline_scripts/test_baseline_ee_onehot.csv",
+          row.names = FALSE)
 
 ```
 
