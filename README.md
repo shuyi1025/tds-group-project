@@ -40,13 +40,13 @@ qsub extraction_and_recoding/3-recode_extracted.sh
 This will run the full workflow and generate the report output.
 
 ``` bash
-Rscript -e "rmarkdown::render('pipeline_scripts/preprocessing/final_preprocessing.Rmd', output_format = 'html_document')"
+Rscript -e "rmarkdown::render('pipeline_scripts/final_preprocessing.Rmd', output_format = 'html_document')"
 ```
 
 #### Option B: Open the file for inspection and run code chunks (Recommended)
 
 ``` bash
-nano pipeline_scripts/preprocessing/final_preprocessing.Rmd
+nano pipeline_scripts/final_preprocessing.Rmd
 ```
 
 ### 3. Imputation (HPC job)
@@ -60,19 +60,19 @@ qsub pipeline_scripts/imputation.sh
 ### 4. Downstream
 
 ``` bash
-Rscript -e "rmarkdown::render('pipeline_scripts/preprocessing/post_imputation_script.Rmd', output_format = 'html_document')"
+Rscript -e "rmarkdown::render('pipeline_scripts/post_imputation_script.Rmd', output_format = 'html_document')"
 ```
 
 #### Option B: Open the file for inspection and run code chunks (Recommended)
 
 ``` bash
-nano pipeline_scripts/preprocessing/post_imputation_script.Rmd
+nano pipeline_scripts/post_imputation_script.Rmd
 ```
 
 ### 5. Aim 1
 
 ``` bash
-nano pipeline_scripts/preprocessing/Aim1.Rmd
+nano pipeline_scripts/Aim1.Rmd
 ```
 
 ## Dependencies
