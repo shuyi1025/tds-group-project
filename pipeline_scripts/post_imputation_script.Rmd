@@ -50,7 +50,7 @@ ukb_test <- readRDS("../pipeline_outputs/ukb_test.rds")
 Load data before imputation to compare
 
 ```{r}
-ukb_raw <- readRDS("../pipeline_outputs/ukb_recoded.rds")
+ukb_raw <- readRDS("../pipeline_outputs/ukb_raw.rds")
 ```
 
 ### Check negative values
