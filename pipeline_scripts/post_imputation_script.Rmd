@@ -19,7 +19,7 @@ Part A) Exploratory analysis
 4)  Manhattan plot
 5)  External exposome correlation analysis
 
-Part B) Data finalisation 
+Part B) Data finalisation
 
 6)  One hot encoding of categorical vars
 7)  Score creation
@@ -35,7 +35,7 @@ library(dplyr)
 library(stringr)
 library(corrplot)
 library(ggplot2)
-library(GGally) 
+library(GGally)
 ```
 
 Load train and test data
@@ -50,7 +50,7 @@ ukb_test <- readRDS("../pipeline_outputs/ukb_test.rds")
 Load data before imputation to compare
 
 ```{r}
-ukb_raw <- readRDS("../extraction_and_recoding/outputs/ukb_recoded.rds")
+ukb_raw <- readRDS("../pipeline_outputs/ukb_recoded.rds")
 ```
 
 ### Check negative values
@@ -284,7 +284,6 @@ ukb_train <- skip_indicators(ukb_train)
 ukb_test <- skip_indicators(ukb_test)
 
 ```
-
 
 ## 3) Table 1
 
@@ -712,7 +711,7 @@ pair_plot
 
 ```
 
-#### Edit dataset to deal with high colinearity (>=0.75)
+#### Edit dataset to deal with high colinearity (\>=0.75)
 
 ```{r}
 strong_075 <- assoc_long %>%
@@ -1427,8 +1426,8 @@ train_v1 <- reorder_cols(train_v1)
 test_v1  <- reorder_cols(test_v1)
 ```
 
-
 ## 9) External exposome specific dataset
+
 ```{r}
 outcome <- "cvd_event"
 covars  <- c("age_recr.0.0", "sex.0.0", "ethnicity.0.0",'bmi','sbp_avg','dbp_avg')
