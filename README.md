@@ -20,6 +20,8 @@ TDS_Group8/
 
 ## 🚀 How to Run
 
+### 0. Before beginning, please cd to the working direction.
+
 ### 1. Extraction & Recoding (HPC jobs)
 
 Submit the extraction and recoding job scripts:
@@ -55,6 +57,22 @@ qsub pipeline_scripts/imputation.sh
 ```
 
 ### 4. Downstream
+
+``` bash
+Rscript -e "rmarkdown::render('pipeline_scripts/preprocessing/post_imputation_script.Rmd', output_format = 'html_document')"
+```
+
+#### Option B: Open the file for inspection and run code chunks (Recommended)
+
+``` bash
+nano pipeline_scripts/preprocessing/post_imputation_script.Rmd
+```
+
+### 5. Aim 1
+
+``` bash
+nano pipeline_scripts/preprocessing/Aim1.Rmd
+```
 
 ## Dependencies
 
