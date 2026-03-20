@@ -21,7 +21,7 @@ TDS_Group8/
 
 ## 🚀 How to Run
 
-### 0. Before beginning, please cd to the working direction.
+### 0. Before beginning, please cd to the working directory.
 
 ### 1. Extraction & Recoding (HPC jobs)
 
