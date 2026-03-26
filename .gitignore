@@ -70,5 +70,6 @@ Partial_mixed_corr_v2.R
 pipeline_outputs/
 *.png
 *.csv
+*.R
 
 
