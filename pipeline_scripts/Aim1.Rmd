@@ -5,15 +5,17 @@ date: "2026-03-20"
 ---
 
 # Workflow overview:
+
 0)  Setup
 1)  Prepare train and test datasets
 2)  LASSO
 3)  Stability selection
 4)  Make onehot encoding datasets with selected variables
 
-
 ### 0) Setup
+
 Load all necessary libraries and datasets
+
 ```{r, libraries}
 library(dplyr)
 library(glmnet)
@@ -63,11 +65,11 @@ preds <- unique(c(baseline_covars, external_vars))
 preds <- setdiff(preds, c(outcome, drop_cols))
 ```
 
-
 ## 2) Prepare training and test datasets
+
 ```{r}
-train_df <- ukb_train %>% select(all_of(c(outcome, preds)))
-test_df  <- ukb_test  %>% select(all_of(c(outcome, preds)))
+train_df <- ukb_train %>% dplyr::select(dplyr::all_of(c(outcome, preds)))
+test_df  <- ukb_test  %>% dplyr::select(dplyr::all_of(c(outcome, preds)))
 
 # Ensure outcome is numeric binary (0/1)
 train_df[[outcome]] <- as.integer(train_df[[outcome]])
@@ -130,6 +132,7 @@ table(penalty_factor)
 ```
 
 # 2) Fit cross-validated LASSO logistic regression
+
 ```{r}
 set.seed(123)
 cvfit <- cv.glmnet(
@@ -196,6 +199,7 @@ saveRDS(coef_df, "../pipeline_outputs/coef_df.rds")
 ```
 
 ## 3) Stability selection
+
 ```{r}
 stab <- VariableSelection(
   xdata = X_tr,
@@ -299,9 +303,10 @@ ggsave(
 ```
 
 ## 4) Make onehot encoding dataset with selected variables
+
 ```{r}
-train_final_onehot <-  model.matrix(~ . - 1, data = train_final) |> as.data.frame()
-test_final_onehot <- model.matrix(~ . - 1, data = test_final) |> as.data.frame()
+train_final_onehot <- model.matrix(~ . - 1, data = train_df) |> as.data.frame()
+test_final_onehot  <- model.matrix(~ . - 1, data = test_df)  |> as.data.frame()
 
 selected_vars <- stable_vars_df$variable
 train_baseline_ee_onehot <- train_final_onehot[, selected_vars, drop = FALSE]
@@ -323,24 +328,101 @@ other_covars <- c(
 
 
 train_baseline_ee_onehot <- cbind(
-  train_final_onehot[, other_covars, drop = FALSE],
+  ukb_train[, ..other_covars],
   train_final_onehot[, onehot_extra, drop = FALSE],
   train_baseline_ee_onehot
 )
 
 test_baseline_ee_onehot <- cbind(
-  test_final_onehot[, other_covars, drop = FALSE],
+  ukb_test[, ..other_covars],
   test_final_onehot[, onehot_extra, drop = FALSE],
   test_baseline_ee_onehot
-  
 )
+
+train_baseline_ee_onehot <- dplyr::select(train_baseline_ee_onehot, -`sex.0.0Female`)
+test_baseline_ee_onehot  <- dplyr::select(test_baseline_ee_onehot, -`sex.0.0Female`)
 
 write.csv(train_baseline_ee_onehot,
           "../pipeline_outputs/train_baseline_ee_onehot.csv",
           row.names = FALSE)
-write.csv(train_baseline_ee_onehot,
+
+write.csv(test_baseline_ee_onehot,
           "../pipeline_outputs/test_baseline_ee_onehot.csv",
           row.names = FALSE)
 
 ```
 
+## 5) Make ee_biomarker datasets
+```{r}
+bio_vars <- c(
+  "assessment_centre_location.0.0",
+  "date_lost_to_fup.0.0",
+  "date_recr.0.0",
+  
+  "blood_haematocrit_percentage.0.0",
+  "blood_hb_conc.0.0",
+  "blood_high_light_scatter_reticulocyte_count.0.0",
+  "blood_high_light_scatter_reticulocyte_percentage.0.0",
+  "blood_immature_reticulocyte_fraction.0.0",
+  "blood_lymphocyte_count.0.0",
+  "blood_lymphocyte_percentage.0.0",
+  "blood_mean_platelet_thrombocyte_volume.0.0",
+  "blood_mean_reticulocyte_volume.0.0",
+  "blood_monocyte_count.0.0",
+  "blood_monocyte_percentage.0.0",
+  "blood_neutrophill_count.0.0",
+  "blood_neutrophill_percentage.0.0",
+  "blood_platelet_count.0.0",
+  "blood_platelet_crit.0.0",
+  "blood_platelet_distribution_width.0.0",
+  "blood_rbc_count.0.0",
+  "blood_rbc_distribution_width.0.0",
+  "blood_reticulocyte_count.0.0",
+  "blood_reticulocyte_percentage.0.0",
+  "blood_wbc_count.0.0",
+  "biochem_apoa.0.0",
+  "biochem_apob.0.0",
+  "biochem_cholesterol.0.0",
+  "biochem_crp.0.0",
+  "biochem_glucose.0.0",
+  "biochem_hba1c.0.0",
+  "biochem_hdl.0.0",
+  "biochem_ldl.0.0",
+  "biochem_lipoa.0.0",
+  "biochem_sodium_urine.0.0",
+  "biochem_triglycerides.0.0"
+)
+
+train_bio_df <- as.data.frame(ukb_train[, ..bio_vars])
+test_bio_df  <- as.data.frame(ukb_test[, ..bio_vars])
+
+train_ee_biomarker_onehot <- cbind(
+  as.data.frame(train_baseline_ee_onehot),
+  train_bio_df
+)
+
+test_ee_biomarker_onehot <- cbind(
+  as.data.frame(test_baseline_ee_onehot),
+  test_bio_df
+)
+
+front_cols <- c("eid", "cvd_event")
+
+train_other_cols <- sort(setdiff(colnames(train_ee_biomarker_onehot), front_cols))
+test_other_cols  <- sort(setdiff(colnames(test_ee_biomarker_onehot), front_cols))
+
+train_ee_biomarker_onehot <- train_ee_biomarker_onehot[, c(front_cols, train_other_cols), drop = FALSE]
+test_ee_biomarker_onehot  <- test_ee_biomarker_onehot[, c(front_cols, test_other_cols), drop = FALSE]
+
+write.csv(
+  train_ee_biomarker_onehot,
+  "../pipeline_outputs/train_ee_biomarker_onehot.csv",
+  row.names = FALSE
+)
+
+write.csv(
+  test_ee_biomarker_onehot,
+  "../pipeline_outputs/test_ee_biomarker_onehot.csv",
+  row.names = FALSE
+)
+```
