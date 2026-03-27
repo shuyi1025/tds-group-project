@@ -82,7 +82,23 @@ nano pipeline_scripts/Aim1.Rmd
 ``` bash
 nano pipeline_scripts/Aim2_3.Rmd
 ```
-### 7.Aim 4
+### 7. Aim 4
+This folder contains four machine learning models used in Aim 4:
+
+logistic.ipynb — Logistic Regression
+random_forest.ipynb — Random Forest
+XGboost.ipynb — XGBoost
+NN.ipynb — Neural Network
+
+Each notebook is designed to run on three alternative training datasets.
+To switch between datasets, modify the data path at the beginning of the notebook.
+
+Available Datasets
+
+The following datasets can be used for Aim 4:
+1. Baseline variables only: "../pipeline_outputs/aim1_output/ukb_train_baseline.csv"
+2. Baseline + external exposome one-hot encoded variables: "../pipeline_outputs/aim1_output/train_baseline_ee_onehot.csv"
+3. Baseline + selected external exposome/biomarker features after stability selection and clustering: "../pipeline_outputs/aim2_3_output/train_ee_bio_stable_allclusters.csv"
 
 ## Dependencies
 
