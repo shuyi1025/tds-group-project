@@ -69,7 +69,7 @@ for (i in 1:length(coding_ids)) {
   tmp <- cbind(tmp, tmp)
   colnames(tmp) <- c("OriginalValue", "OriginalMeaning", "RecodedValue", "RecodedMeaning")
   write.table(tmp, paste0("../parameters/codings/codes_", codeID, ".txt"),
-    row.names = FALSE, col.names = TRUE
+              row.names = FALSE, col.names = TRUE
   )
   utils::setTxtProgressBar(pb, i / length(coding_ids))
 }
@@ -78,7 +78,7 @@ cat("\n")
 # Preparing template for recoding of continuous variables
 tmp <- data.frame(MinValue = NA, MaxValue = NA, RecodedValue = NA, RecodedMeaning = NA)
 write.table(tmp, paste0("../parameters/codings/codes_template_continuous.txt"),
-  row.names = FALSE, col.names = TRUE
+            row.names = FALSE, col.names = TRUE
 )
 
 # Create figure names. If a manual figure name is not supplied, supply 'Field' as figure name
@@ -98,3 +98,4 @@ saveRDS(choices, "../outputs/annot.rds")
 
 # Saving extracted dataset
 saveRDS(mydata, "../outputs/ukb_extracted.rds")
+

@@ -10,7 +10,9 @@ date: "2026-03-20"
 1)  Prepare train and test datasets
 2)  LASSO
 3)  Stability selection
-4)  Make onehot encoding datasets with selected variables
+4)  Make datasets with only baseline variables
+5)  Make onehot encoding datasets with selected variables
+6)  Make ee_biomarker datasets
 
 ### 0) Setup
 
@@ -307,7 +309,31 @@ ggsave(
 )
 ```
 
-## 4) Make onehot encoding dataset with selected variables
+## 4) Make datasets with only baseline variables
+```{r}
+keep_cols <- c("eid", "cvd_event", "age_recr.0.0", "sex.0.0", "ethnicity.0.0", 
+               "bmi", "sbp_avg", "dbp_avg")
+
+keep_cols <- intersect(keep_cols, names(ukb_train))
+
+ukb_train_baseline <- ukb_train[, keep_cols, drop = FALSE]
+ukb_test_baseline  <- ukb_test[, keep_cols, drop = FALSE]
+
+write.csv(
+  ukb_train_baseline,
+  "../pipeline_outputs/aim1_output/ukb_train_baseline.csv",
+  row.names = FALSE
+)
+
+write.csv(
+  ukb_test_baseline,
+  "../pipeline_outputs/aim1_output/ukb_train_baseline.csv",
+  row.names = FALSE
+)
+
+```
+
+## 5) Make onehot encoding dataset with selected variables
 
 ```{r}
 train_final_onehot <- model.matrix(~ . - 1, data = train_df) |> as.data.frame()
@@ -357,7 +383,7 @@ write.csv(test_baseline_ee_onehot,
 
 ```
 
-## 5) Make ee_biomarker datasets
+## 6) Make ee_biomarker datasets
 ```{r}
 bio_vars <- c(
   "blood_haematocrit_percentage.0.0",

@@ -18,10 +18,11 @@ output:
 6)  Instance selection
 7)  Merging/dropping of variables
 8)  IMD tertiles
-9)  Missingness checks
-10) Vars exclusion
-11) Table1
-12) Imputation
+9)  Alcohol & BMI cats
+10) Missingness checks
+11) Vars exclusion
+12) Table1
+13) Imputation
 
 ## 0) Setup
 
@@ -84,9 +85,8 @@ Distribution checks are ran on the dataset before any changes. /rds/general/proj
 
 ## 2) Exclusion
 
-Exclude individuals with CVD_event before recruitment
+Exclude individuals with CVD_event before recruitment and within 1 year washout period
 
-*Included a 1 year wash out period*
 
 ```{r, exclusion}
 
@@ -424,7 +424,7 @@ process_imd <- function(df) {
     )
   
   df <- df%>%
-    dplyr::select(-uk_country, -imd_raw, -imd_tertile, -ses_imd_england.0.0, -ses_imd_scotland.0.0, -ses_imd_wales.0.0)
+    dplyr::select(-uk_country, -imd_raw, -imd_tertile, -ses_imd_england.0.0, -ses_imd_scotland.0.0, -ses_imd_wales.0.0, -assessment_centre_location.0.0)
   
   return(df)
 }
@@ -435,7 +435,63 @@ ukb_v2 <- process_imd(ukb_v2)
 
 ```
 
-## 9) Missingness checks
+## 9) Alcohol and BMI cats
+
+```{r, cats}
+process_alcohol_bmi <- function(df) {
+  
+  df %>%
+    dplyr::mutate(
+      
+      #aclohol categories
+      alcohol_category = case_when(
+        
+        # Never drinkers
+        alc_freq.0.0 == "Never" ~ "Non-drinker",
+        alc_status.0.0 == "Never" ~ "Non-drinker",
+        
+        # Former drinkers
+        alc_status.0.0 == "Previous" ~ "Former",
+        
+        # Current drinkers by frequency
+        alc_status.0.0 == "Current" &
+          alc_freq.0.0 %in% c("Special occasions only",
+                              "One to three times a month") ~ "Social drinker",
+        
+        alc_status.0.0 == "Current" &
+          alc_freq.0.0 == "Once or twice a week" ~ "Moderate drinker",
+        
+        alc_status.0.0 == "Current" &
+          alc_freq.0.0 %in% c("Three or four times a week",
+                              "Daily or almost daily") ~ "Daily drinker",
+        
+        TRUE ~ NA_character_
+      ),
+      
+      # bmi cats
+      bmi = cut(
+        bmi.0.0,
+        breaks = c(-Inf, 18.5, 25, 30, 40, Inf),
+        labels = c(
+          "Underweight (<18.5)",
+          "Normal weight (18.5–24.9)",
+          "Overweight (25–29.9)",
+          "Obese (30–39.9)",
+          "Severely obese (≥40)"
+        ),
+        right = FALSE
+      )
+    ) %>%
+    
+# drop original cols
+  dplyr::select(-bmi.0.0, -alc_freq.0.0, -alc_status.0.0,)
+}  
+
+ukb_v2 <- process_alcohol_bmi(ukb_v2)
+```
+
+
+## 10) Missingness checks
 
 ```{r, missingness}
 
@@ -490,16 +546,14 @@ hist(row_missing_rate, breaks = 50)
 
 ```
 
-## 10) Excluding vars
+## 11) Excluding vars
 
-Vars have been excluded based on their level of missingness in the UK Biobank
-
-*Summed MET minutes/week is unavailable on Biobank, other vars have \>50% NA*
+Vars have been excluded based on their level of missingness in the UK Biobank. Vars with missingness >50% are excluded.
 
 ```{r, exc}
 
 ukb_v2 <- ukb_v2%>%
-  dplyr::select(-phys_MET_week.0.0, -starts_with("smoke_age"), 
+  dplyr::select( -starts_with("smoke_age"), 
          -starts_with("smoke_tobacco_type_"), -diet_carb.0.0, -diet_energy.0.0, -diet_fat.0.0,
          -diet_food_weight.0.0, -diet_polyunsat_fat.0.0, -diet_protein.0.0, -diet_sat_fat.0.0,
          -diet_total_sugar.0.0, -sleep_wake_early.0.0, -sleep_too_much.0.0, 
@@ -510,7 +564,7 @@ ukb_v2 <- ukb_v2%>%
 ```
 
 
-## 11) Table 1
+## 12) Table 1
 ```{r}
 # ---- helper functions ----
 fmt_mean_sd <- function(x, digits = 1) {
