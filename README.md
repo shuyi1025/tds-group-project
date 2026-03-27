@@ -17,6 +17,7 @@ TDS_Group8/
     ├── post_imputation
     ├── Aim 1
     ├── Aim 2&3
+    ├── Aim 4
 ├── pipeline_outputs/           # generated outputs
 ```
 
@@ -76,11 +77,12 @@ nano pipeline_scripts/post_imputation_script.Rmd
 nano pipeline_scripts/Aim1.Rmd
 ```
 
-### 5. Aim 2&3
+### 6. Aim 2&3
 
 ``` bash
 nano pipeline_scripts/Aim2_3.Rmd
 ```
+### 7.Aim 4
 
 ## Dependencies
 
