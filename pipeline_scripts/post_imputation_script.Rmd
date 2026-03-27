@@ -1238,62 +1238,6 @@ test_v1  <- create_mh_symptom_score(test_v1)
 
 ## 8) Categories
 
-### Alcohol and BMI cats
-
-```{r, alc_bmi}
-
-process_alcohol_bmi <- function(df) {
-  
-  df %>%
-    dplyr::mutate(
-      
-      #aclohol categories
-      alcohol_category = case_when(
-        
-        # Never drinkers
-        alc_freq.0.0 == "Never" ~ "Non-drinker",
-        alc_status.0.0 == "Never" ~ "Non-drinker",
-        
-        # Former drinkers
-        alc_status.0.0 == "Previous" ~ "Former",
-        
-        # Current drinkers by frequency
-        alc_status.0.0 == "Current" &
-          alc_freq.0.0 %in% c("Special occasions only",
-                              "One to three times a month") ~ "Social drinker",
-        
-        alc_status.0.0 == "Current" &
-          alc_freq.0.0 == "Once or twice a week" ~ "Moderate drinker",
-        
-        alc_status.0.0 == "Current" &
-          alc_freq.0.0 %in% c("Three or four times a week",
-                              "Daily or almost daily") ~ "Daily drinker",
-        
-        TRUE ~ NA_character_
-      ),
-      
-      # bmi cats
-      bmi = cut(
-        bmi.0.0,
-        breaks = c(-Inf, 18.5, 25, 30, 40, Inf),
-        labels = c(
-          "Underweight (<18.5)",
-          "Normal weight (18.5–24.9)",
-          "Overweight (25–29.9)",
-          "Obese (30–39.9)",
-          "Severely obese (≥40)"
-        ),
-        right = FALSE
-      )
-    ) %>%
-    
-# drop original cols
-  dplyr::select(-bmi.0.0, -alc_freq.0.0, -alc_status.0.0,)
-}  
-train_v1 <- process_alcohol_bmi(train_v1)
-test_v1  <- process_alcohol_bmi(test_v1)
-```
-
 ### Employment cats & one hot encoding
 
 ```{r, employment}
