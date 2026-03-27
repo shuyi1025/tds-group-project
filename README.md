@@ -11,11 +11,12 @@ This repository contains the data processing and modelling pipeline for analysin
 ```         
 TDS_Group8/
 ├── extraction_and_recoding/    # extraction + recoding workflow
-├── pipeline_scripts/           # main preprocessing / imputation / downstream / Aim 1 scripts
+├── pipeline_scripts/           # main preprocessing / imputation / downstream / Aims scripts
     ├── preprocessing
     ├── imputation
     ├── post_imputation
     ├── Aim 1
+    ├── Aim 2&3
 ├── pipeline_outputs/           # generated outputs
 ```
 
@@ -75,6 +76,12 @@ nano pipeline_scripts/post_imputation_script.Rmd
 nano pipeline_scripts/Aim1.Rmd
 ```
 
+### 5. Aim 2&3
+
+``` bash
+nano pipeline_scripts/Aim2_3.Rmd
+```
+
 ## Dependencies
 
 ```         
@@ -91,4 +98,6 @@ nano pipeline_scripts/Aim1.Rmd
 - ggplot2
 - GGally
 - corrplot
+- uwot
+- pROC
 ```

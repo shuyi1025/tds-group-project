@@ -36,22 +36,21 @@ library(stringr)
 library(corrplot)
 library(ggplot2)
 library(GGally)
+library(data.table)
 ```
 
-Load train and test data
+Load datasets
 
 ```{r, data}
-ukb_train <- readRDS("../pipeline_outputs/ukb_train.rds")
-ukb_test <- readRDS("../pipeline_outputs/ukb_test.rds")
+ukb_train <- readRDS("../pipeline_outputs/imputation_output/ukb_train.rds")
+ukb_test  <- readRDS("../pipeline_outputs/imputation_output/ukb_test.rds")
+ukb_raw   <- readRDS("../pipeline_outputs/pre_output/ukb_raw.rds")
+
+output_dir <- "../pipeline_outputs/post_imputation_output"
+dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 ```
 
 ## 1) Distribution checks
-
-Load data before imputation to compare
-
-```{r}
-ukb_raw <- readRDS("../pipeline_outputs/ukb_raw.rds")
-```
 
 ### Check negative values
 
@@ -197,16 +196,11 @@ ukb_test  <- process_diet_none(ukb_test)
 ```{r, med_sl}
 process_cbd_meds <- function(df) {
   
-# Identify cols
-  
   med_cols_male <- grep("^med_chol_bp_diabetes\\.0\\.[0-2]+$",
                         names(df), value = TRUE)
   
   med_cols_female <- grep("^med_chol_bp_diabetes_hormones\\.0\\.[0-3]+$",
                           names(df), value = TRUE)
-  
-  
-# Apply skip logic (ensure we don't have to deal with contradictions and incorrect scores)
   
   df <- df %>%
     mutate(across(
@@ -216,7 +210,10 @@ process_cbd_meds <- function(df) {
     mutate(across(
       all_of(med_cols_female),
       ~ ifelse(sex.0.0 == "Male", NA, as.character(.))
-    ))}
+    ))
+  
+  return(df)
+}
 
 ukb_train <- process_cbd_meds(ukb_train)
 ukb_test  <- process_cbd_meds(ukb_test)
@@ -246,6 +243,7 @@ clean_employment_data <- function(ukb_df) {
     "ses_household_income_before_tax_avg.0.0"
   )
   
+  char_vars <- intersect(char_vars, names(ukb_df))
   ukb_df[char_vars] <- lapply(ukb_df[char_vars], as.character)
   
   # set employment dependent vars
@@ -275,9 +273,13 @@ ukb_test  <- clean_employment_data(ukb_test)
 ```{r, rm}
 
 skip_indicators <- function(df){
-  df%>%
-    dplyr::select(-employed, -smoke_past_indicator, -smoke_current_indicator,  
-           -ses_age_completed_full_time_education.0.0)
+  df %>%
+    dplyr::select(-any_of(c(
+      "employed",
+      "smoke_past_indicator",
+      "smoke_current_indicator",
+      "ses_age_completed_full_time_education.0.0"
+    )))
 }
 
 ukb_train <- skip_indicators(ukb_train)
@@ -363,7 +365,7 @@ table1_df <- do.call(rbind, table1_list)
 print(table1_df, row.names = FALSE)
 
 # export
-write.csv(table1_df, "../pipeline_outputs/Table1_imputed.csv", row.names = FALSE)
+write.csv(table1_df, file.path(output_dir, "Table1_imputed.csv"), row.names = FALSE)
 ```
 
 ## 4) Manhattan plot
@@ -384,7 +386,7 @@ drop_cols <- c(
 
 exposome_prefix <- c("^diet_", "^emp_", "^env_", "^med_", "^mh_", "^phys_", "^sed_", "^ses_", "^sleep_", "^smoke_")
 exposome_single <- c(
-  "qualification.0.5","alcohol_category","employed"
+  "qualification.0.5","alcohol_category"
 )
 
 exposures <- names(ukb_train)[
@@ -410,7 +412,7 @@ get_domain <- function(v){
 # One-exposure EWAS model with GLOBAL p
 
 run_one <- function(var) {
-  dat <- train[, c(outcome, covars, var), drop = FALSE]
+  dat <- ukb_train[, c(outcome, covars, var), drop = FALSE]
   if (is.character(dat[[var]])) dat[[var]] <- as.factor(dat[[var]])
   dat <- tidyr::drop_na(dat)
   
@@ -517,7 +519,7 @@ p_manhattan <- ggplot(res2, aes(x = pos, y = neglog10p, color = domain)) +
   )
 
 print(p_manhattan)
-ggsave("../pipeline_outputs/manhattan_train_by_domain.png", p_manhattan, width = 12, height = 5, dpi = 300)
+ggsave(file.path(output_dir, "manhattan_train_by_domain.png"), p_manhattan, width = 12, height = 5, dpi = 300)
 
 ```
 
@@ -603,10 +605,10 @@ association_matrix <- function(df){
 # Prepare combined dataframe 
 
 domain_list <- list(
-  lifestyle = train %>% dplyr::select(matches("^(alc|diet|phys|sed|smoke|sleep)")),
-  socioeconomic = train %>% dplyr::select(matches("^(ses|emp)"), qualification.0.5, imd, ethnicity.0.0),
-  psychosocial = train %>% dplyr::select(matches("^mh")),
-  environmental = train %>% dplyr::select(matches("^env"))
+  lifestyle = ukb_train %>% dplyr::select(matches("^(alc|diet|phys|sed|smoke|sleep)")),
+  socioeconomic = ukb_train %>% dplyr::select(matches("^(ses|emp)"), qualification.0.5, imd, ethnicity.0.0),
+  psychosocial = ukb_train %>% dplyr::select(matches("^mh")),
+  environmental = ukb_train %>% dplyr::select(matches("^env"))
 )
 
 # Convert characters to factors
@@ -622,7 +624,7 @@ big_df <- as.data.frame(bind_cols(domain_list))
 assoc_big <- association_matrix(big_df)
 
 # Plot combined heatmap 
-png("all_domains_association_heatmap.png", width=4000, height=4000, res=300)
+png(file.path(output_dir, "all_domains_association_heatmap.png"), width=4000, height=4000, res=300)
 corrplot(
   assoc_big,
   method="color",
@@ -663,7 +665,7 @@ for(thresh in thresholds){
   # Save to CSV
   write.csv(
     strong_df,
-    file = paste0("../pipeline_outputs/strong_associations_", gsub("\\.", "", thresh*100), ".csv"),
+    file = file.path(output_dir, paste0("strong_associations_", gsub("\\.", "", thresh*100), ".csv")),
     row.names = FALSE
   )
 }
@@ -677,7 +679,7 @@ for(thresh in thresholds){
 # analysing baseline vars relationship
 
 # Subset data for variables of interest
-plot_df <- train %>%
+plot_df <- ukb_train %>%
   dplyr::select(age_recr.0.0, bmi.0.0, sbp_avg, dbp_avg, sex.0.0) %>%  # adjust variable names if needed
   dplyr::filter(!is.na(age_recr.0.0) & !is.na(bmi.0.0) & !is.na(sbp_avg) & !is.na(dbp_avg) & !is.na(sex.0.0))
 
@@ -704,7 +706,7 @@ pair_plot <- ggpairs(
 
 
 # Save to file
-ggsave("../pipeline_outputs/age_bmi_sbp_dbp_pairs.png", pair_plot, width = 10, height = 10, dpi = 300)
+ggsave(file.path(output_dir, "age_bmi_sbp_dbp_pairs.png"), pair_plot, width = 10, height = 10, dpi = 300)
 
 # Display plot
 pair_plot
@@ -994,16 +996,31 @@ test_v1  <- process_cbpd_meds(test_v1)
 ```
 
 ## 7) Score creation
-
 ### Diet score
 
 ```{r, diet}
 process_diet <- function(df) {
   
-  library(data.table)
-  
   # Ensure we are working with data.table
   if (!"data.table" %in% class(df)) df <- as.data.table(df)
+  
+  vars_to_drop_1 <- paste0(c(
+  "diet_spread_type",
+  "diet_salt_added_food",
+  "diet_milk_type",
+  "diet_processed_meat_intake",
+  "diet_pork_intake",
+  "diet_oily_fish_intake",
+  "diet_non_oily_fish_intake",
+  "diet_lamb_mutton_intake",
+  "diet_cereal_intake",
+  "diet_beef_intake",
+  "diet_fresh_fruit_intake",
+  "diet_dried_fruit_intake",
+  "diet_cooked_veg_intake",
+  "diet_raw_veg_intake",
+  "diet_water_intake"
+), ".0.0")
   
   # Convert fruit/veg to numeric
   fv_to_num <- function(x) {
@@ -1082,7 +1099,13 @@ process_diet <- function(df) {
        risk_water]
   
   df <- df %>%
-    dplyr::select(-starts_with("risk_"), -starts_with("diet_total_f"), -starts_with("fv_"), -diet_total_red_meat_intake)
+  dplyr::select(
+    -starts_with("risk_"),
+    -starts_with("diet_total_f"),
+    -starts_with("fv_"),
+    -diet_total_red_meat_intake,
+    -dplyr::any_of(vars_to_drop_1)
+  )
   
   return(df)
 }
@@ -1091,7 +1114,6 @@ train_v1 <- process_diet(train_v1)
 test_v1  <- process_diet(test_v1)
 
 ```
-
 ### Sleep score
 
 ```{r, sleep}
@@ -1453,6 +1475,6 @@ exposures <- setdiff(exposures, drop_cols)
 ##### Save
 
 ```{r, save}
-saveRDS(train_v1, file = "../pipeline_outputs/train_final.rds")
-saveRDS(test_v1, file = "../pipeline_outputs/test_final.rds")
+saveRDS(train_v1, file = file.path(output_dir, "train_final.rds"))
+saveRDS(test_v1,  file = file.path(output_dir, "test_final.rds"))
 ```
