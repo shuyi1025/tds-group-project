@@ -37,6 +37,7 @@ library(corrplot)
 library(ggplot2)
 library(GGally)
 library(data.table)
+library(broom)
 ```
 
 Load datasets
@@ -191,33 +192,7 @@ ukb_train <- process_diet_none(ukb_train)
 ukb_test  <- process_diet_none(ukb_test)
 ```
 
-### Medication variables skip logic
 
-```{r, med_sl}
-process_cbd_meds <- function(df) {
-  
-  med_cols_male <- grep("^med_chol_bp_diabetes\\.0\\.[0-2]+$",
-                        names(df), value = TRUE)
-  
-  med_cols_female <- grep("^med_chol_bp_diabetes_hormones\\.0\\.[0-3]+$",
-                          names(df), value = TRUE)
-  
-  df <- df %>%
-    mutate(across(
-      all_of(med_cols_male),
-      ~ ifelse(sex.0.0 == "Female", NA, as.character(.))
-    )) %>%
-    mutate(across(
-      all_of(med_cols_female),
-      ~ ifelse(sex.0.0 == "Male", NA, as.character(.))
-    ))
-  
-  return(df)
-}
-
-ukb_train <- process_cbd_meds(ukb_train)
-ukb_test  <- process_cbd_meds(ukb_test)
-```
 
 ### SES skip logic
 
@@ -275,7 +250,6 @@ ukb_test  <- clean_employment_data(ukb_test)
 skip_indicators <- function(df){
   df %>%
     dplyr::select(-any_of(c(
-      "employed",
       "smoke_past_indicator",
       "smoke_current_indicator",
       "ses_age_completed_full_time_education.0.0"
@@ -379,12 +353,11 @@ ukb_train[[outcome]] <- as.integer(ukb_train[[outcome]])
 
 # Define exposome exposures
 drop_cols <- c(
-  "eid","cvd_date","date_death.0.0","date_lost_to_fup.0.0","date_recr.0.0",
-  "dob.0.0","mob","yob","assessment_centre_location.0.0",
+  "eid","date_lost_to_fup.0.0","date_recr.0.0","assessment_centre_location.0.0",
   outcome, covars
 )
 
-exposome_prefix <- c("^diet_", "^emp_", "^env_", "^med_", "^mh_", "^phys_", "^sed_", "^ses_", "^sleep_", "^smoke_")
+exposome_prefix <- c("^diet_", "^emp_", "^env_", "^mh_", "^phys_", "^sed_", "^ses_", "^sleep_", "^smoke_")
 exposome_single <- c(
   "qualification.0.5","alcohol_category"
 )
@@ -400,10 +373,9 @@ exposures <- setdiff(exposures, drop_cols)
 get_domain <- function(v){
   if (grepl("^diet_|^alcohol_category", v)) return("Diet/Alcohol")
   if (grepl("^env_", v)) return("Environment")
-  if (grepl("^med_", v)) return("Medication")
   if (grepl("^mh_", v)) return("Mental health")
   if (grepl("^phys_|^sed_", v)) return("Physical activity")
-  if (grepl("^ses_|^emp_|^imd$|^qualification|^employed$", v)) return("Socioeconomic")
+  if (grepl("^ses_|^emp_|^imd$|^qualification", v)) return("Socioeconomic")
   if (grepl("^sleep_", v)) return("Sleep")
   if (grepl("^smoke_", v)) return("Smoking")
   "Other"
@@ -433,24 +405,35 @@ run_one <- function(var) {
   # exposure type
   is_fact <- is.factor(dat[[var]])
   
-  if (!is_fact) {
-    # numeric / 0-1: Wald p for var
-    sm <- summary(fit1)
-    if (!(var %in% rownames(sm$coefficients))) return(NULL)
-    beta <- sm$coefficients[var, "Estimate"]
-    pval <- sm$coefficients[var, "Pr(>|z|)"]
-    
-    return(data.frame(
-      variable = var,
-      domain = get_domain(var),
-      type = "numeric",
-      n_used = n_used,
-      beta = beta,
-      OR = exp(beta),
-      p = pval,
-      stringsAsFactors = FALSE
-    ))
+if (!is_fact) {
+  # standardise continuous exposure if not binary
+  if (length(unique(dat[[var]])) > 2) {
+    dat[[var]] <- as.numeric(scale(dat[[var]]))
+    type_now <- "numeric_sd"
   } else {
+    type_now <- "numeric_binary"
+  }
+  
+  fit1 <- try(glm(full_fml, data = dat, family = binomial()), silent = TRUE)
+  if (inherits(fit1, "try-error")) return(NULL)
+  
+  sm <- summary(fit1)
+  if (!(var %in% rownames(sm$coefficients))) return(NULL)
+  
+  beta <- sm$coefficients[var, "Estimate"]
+  pval <- sm$coefficients[var, "Pr(>|z|)"]
+  
+  return(data.frame(
+    variable = var,
+    domain = get_domain(var),
+    type = type_now,
+    n_used = n_used,
+    beta = beta,
+    OR = exp(beta),
+    p = pval,
+    stringsAsFactors = FALSE
+  ))
+} else {
     # factor: GLOBAL LRT p
     lr <- anova(fit0, fit1, test = "LRT")
     pval <- lr$`Pr(>Chi)`[2]
@@ -477,13 +460,13 @@ res <- res %>%
     neglog10p = -log10(p)
   )
 
+write.csv(res, file.path(output_dir, "manhattan_results.csv"), row.names = FALSE)
 
-# 4) Plot Manhattan
+# 4a) Plot Manhattan
 
 domain_order <- c(
   "Diet/Alcohol",
   "Environment",
-  "Medication",
   "Mental health",
   "Physical activity",
   "Socioeconomic",
@@ -520,6 +503,106 @@ p_manhattan <- ggplot(res2, aes(x = pos, y = neglog10p, color = domain)) +
 
 print(p_manhattan)
 ggsave(file.path(output_dir, "manhattan_train_by_domain.png"), p_manhattan, width = 12, height = 5, dpi = 300)
+
+## 4b) Top signals effect size table
+
+# choose top variables from Manhattan results
+top_vars <- res %>%
+  arrange(p) %>%
+  slice_head(n = 10) %>%
+  pull(variable)
+
+get_or_ci_table <- function(var) {
+  dat <- ukb_train[, c(outcome, covars, var), drop = FALSE]
+  dat <- tidyr::drop_na(dat)
+  
+  if (nrow(dat) < 200) return(NULL)
+  if (length(unique(dat[[var]])) < 2) return(NULL)
+  
+  # character -> factor
+  if (is.character(dat[[var]])) dat[[var]] <- as.factor(dat[[var]])
+  
+  # numeric: standardise to per SD increase
+  if (is.numeric(dat[[var]]) && length(unique(dat[[var]])) > 2) {
+    dat[[var]] <- as.numeric(scale(dat[[var]]))
+    
+    fit <- try(glm(
+      as.formula(paste0(outcome, " ~ ", var, " + ", paste(covars, collapse = " + "))),
+      data = dat,
+      family = binomial()
+    ), silent = TRUE)
+    
+    if (inherits(fit, "try-error")) return(NULL)
+    
+    sm <- summary(fit)$coefficients
+    if (!(var %in% rownames(sm))) return(NULL)
+    
+    ci <- suppressMessages(confint.default(fit))
+    
+    data.frame(
+      Variable = var,
+      Level = "Per SD increase",
+      OR = exp(sm[var, "Estimate"]),
+      CI_low = exp(ci[var, 1]),
+      CI_high = exp(ci[var, 2]),
+      P_value = sm[var, "Pr(>|z|)"],
+      stringsAsFactors = FALSE
+    )
+    
+  } else if (is.factor(dat[[var]]) || is.logical(dat[[var]]) || (is.numeric(dat[[var]]) && length(unique(dat[[var]])) == 2)) {
+    
+    # if binary numeric, convert to factor for clearer output
+    if (is.numeric(dat[[var]]) && length(unique(dat[[var]])) == 2) {
+      dat[[var]] <- as.factor(dat[[var]])
+    }
+    
+    fit <- try(glm(
+      as.formula(paste0(outcome, " ~ ", var, " + ", paste(covars, collapse = " + "))),
+      data = dat,
+      family = binomial()
+    ), silent = TRUE)
+    
+    if (inherits(fit, "try-error")) return(NULL)
+    
+    tidy_fit <- broom::tidy(fit, conf.int = TRUE, exponentiate = TRUE)
+    
+    # keep only exposure rows, not covariates / intercept
+    out <- tidy_fit %>%
+      dplyr::filter(grepl(paste0("^", var), term)) %>%
+      dplyr::mutate(
+        Variable = var,
+        Level = sub(paste0("^", var), "", term),
+        Level = ifelse(Level == "", "Per unit increase", Level),
+        OR = estimate,
+        CI_low = conf.low,
+        CI_high = conf.high,
+        P_value = p.value
+      ) %>%
+      dplyr::select(Variable, Level, OR, CI_low, CI_high, P_value)
+    
+    if (nrow(out) == 0) return(NULL)
+    out
+    
+  } else {
+    return(NULL)
+  }
+}
+
+effect_table <- lapply(top_vars, get_or_ci_table) %>%
+  bind_rows() %>%
+  mutate(
+    `OR (95% CI)` = sprintf("%.2f (%.2f–%.2f)", OR, CI_low, CI_high),
+    P_value = sprintf("%.4f", P_value)
+  ) %>%
+  dplyr::select(Variable, Level, `OR (95% CI)`, P_value)
+
+print(effect_table, row.names = FALSE)
+
+write.csv(
+  effect_table,
+  file.path(output_dir, "top10_effect_size_table.csv"),
+  row.names = FALSE
+)
 
 ```
 
@@ -829,171 +912,6 @@ train_v1 <- mh_exclusive(train_v1)
 test_v1  <- mh_exclusive(test_v1)
 ```
 
-### Medication prch
-
-One hot encoding & deterministic
-
-```{r, med_prch}
-process_med_prch <- function(df) {
-  
-  
-  # Identify array columns
-  med_cols_target <- paste0("med_pain_relief_constipation_heartburn.0.", 0:5)
-  med_cols_present <- med_cols_target[med_cols_target %in% names(df)]
-  
-  if (length(med_cols_present) == 0) {
-    stop("No med_pain_relief_constipation_heartburn.0.* columns found.")
-  }
-  
-  # Convert to character matrix
-  med_mat_chr <- as.matrix(
-    df[, med_cols_present, drop = FALSE] %>%
-      mutate(across(everything(), as.character))
-  )
-  
-  # Collect unique codes
-  all_codes <- sort(unique(c(med_mat_chr)))
-  all_codes <- all_codes[!is.na(all_codes)]
-  
-  # Safe name helper
-  safe_code_name <- function(x) {
-    x <- str_trim(x)
-    x <- str_to_lower(x)
-    x <- gsub("[^a-z0-9]+", "_", x)
-    x <- gsub("^_+|_+$", "", x)
-    x
-  }
-  
-  onehot_names <- paste0("med_prch_", safe_code_name(all_codes))
-  
-  # Build one-hot matrix
-  onehot <- matrix(
-    0L,
-    nrow = nrow(df),
-    ncol = length(all_codes),
-    dimnames = list(NULL, onehot_names)
-  )
-  
-  for (j in seq_along(all_codes)) {
-    code <- all_codes[j]
-    onehot[, j] <- as.integer(rowSums(med_mat_chr == code, na.rm = TRUE) > 0)
-  }
-  
-  df <- bind_cols(df, as.data.frame(onehot))
-  
-  # Rename specific columns safely
-  rename_map <- c(
-    "med_prch_ibuprofen_e_g_nurofen" = "med_prch_ibuprofen",
-    "med_prch_laxatives_e_g_dulcolax_senokot" = "med_prch_laxatives",
-    "med_prch_omeprazole_e_g_zanprol" = "med_prch_omeprazole",
-    "med_prch_ranitidine_e_g_zantac" = "med_prch_ranitidine"
-  )
-  
-  for (old in names(rename_map)) {
-    if (old %in% names(df)) {
-      names(df)[names(df) == old] <- rename_map[[old]]
-    }
-  }
-  
-  # Enforce exclusivity
-  none_col <- "med_prch_none_of_the_above"
-  prch_cols <- grep("^med_prch_", names(df), value = TRUE)
-  
-  if (none_col %in% names(df)) {
-    other_cols <- setdiff(prch_cols, none_col)
-    idx_none <- df[[none_col]] == 1
-    df[idx_none, other_cols] <- 0
-  }
-  
-  # Drop original array columns
-  df <- df %>%
-    dplyr::select(-all_of(med_cols_present))
-  
-  return(df)
-}
-
-train_v1 <- process_med_prch(train_v1)
-test_v1  <- process_med_prch(test_v1)
-```
-
-### Medication chol/bp/diabetes/hormone
-
-One hot encoding & deterministic recoding
-
-```{r, med_cbpd}
-
-# Apply one hot encoding
-process_cbpd_meds <- function(df)  {
-  
-  # Identify cols
-  
-  med_cols_male <- grep("^med_chol_bp_diabetes\\.0\\.[0-2]+$",
-                        names(df), value = TRUE)
-  
-  med_cols_female <- grep("^med_chol_bp_diabetes_hormones\\.0\\.[0-3]+$",
-                          names(df), value = TRUE)
-  
-  med_cols_present <- c(med_cols_male, med_cols_female)
-  
-  if (length(med_cols_present) == 0) {
-    stop("No medication columns found.")
-  }
-  
-  med_mat <- df[, med_cols_present, drop = FALSE] %>%
-    mutate(across(everything(), as.character))
-  
-  med_mat_chr <- as.matrix(med_mat)
-  
-  all_codes <- sort(unique(c(med_mat_chr)))
-  all_codes <- all_codes[!is.na(all_codes)]
-  
-  safe_code_name <- function(x) {
-    x <- as.character(x)
-    x <- str_trim(x)
-    x <- str_to_lower(x)
-    x <- gsub("[^a-z0-9]+", "_", x)
-    x <- gsub("^_+|_+$", "", x)
-    x
-  }
-  
-  onehot_names <- paste0("med_cbd_", safe_code_name(all_codes))
-  
-  onehot <- matrix(
-    0L,
-    nrow = nrow(med_mat_chr),
-    ncol = length(all_codes),
-    dimnames = list(NULL, onehot_names)
-  )
-  
-  for (j in seq_along(all_codes)) {
-    code <- all_codes[j]
-    onehot[, j] <- as.integer(rowSums(med_mat_chr == code, na.rm = TRUE) > 0)
-  }
-  
-  df <- bind_cols(df, as.data.frame(onehot))
-  
-# Enforce exclusivity (if answer is "None of the above" ensures all meds are 0)
-  
-  mh_cols <- grep("^med_cbd_", names(df), value = TRUE)
-  none_col <- "med_cbd_none_of_the_above"
-  other_cols <- setdiff(mh_cols, none_col)
-  
-  if (none_col %in% names(df)) {
-    idx_none <- df[[none_col]] == 1
-    df[idx_none, other_cols] <- 0
-  }
-  
-  # Drop original arrays
-  
-  df <- df %>%
-    dplyr::select(-all_of(med_cols_present))
-  
-  return(df)
-  }
-
-train_v1 <- process_cbpd_meds(train_v1)
-test_v1  <- process_cbpd_meds(test_v1)
-```
 
 ## 7) Score creation
 ### Diet score
@@ -1318,62 +1236,6 @@ test_v1  <- create_mh_symptom_score(test_v1)
 
 ## 8) Categories
 
-### Alcohol and BMI cats
-
-```{r, alc_bmi}
-
-process_alcohol_bmi <- function(df) {
-  
-  df %>%
-    dplyr::mutate(
-      
-      #aclohol categories
-      alcohol_category = case_when(
-        
-        # Never drinkers
-        alc_freq.0.0 == "Never" ~ "Non-drinker",
-        alc_status.0.0 == "Never" ~ "Non-drinker",
-        
-        # Former drinkers
-        alc_status.0.0 == "Previous" ~ "Former",
-        
-        # Current drinkers by frequency
-        alc_status.0.0 == "Current" &
-          alc_freq.0.0 %in% c("Special occasions only",
-                              "One to three times a month") ~ "Social drinker",
-        
-        alc_status.0.0 == "Current" &
-          alc_freq.0.0 == "Once or twice a week" ~ "Moderate drinker",
-        
-        alc_status.0.0 == "Current" &
-          alc_freq.0.0 %in% c("Three or four times a week",
-                              "Daily or almost daily") ~ "Daily drinker",
-        
-        TRUE ~ NA_character_
-      ),
-      
-      # bmi cats
-      bmi = cut(
-        bmi.0.0,
-        breaks = c(-Inf, 18.5, 25, 30, 40, Inf),
-        labels = c(
-          "Underweight (<18.5)",
-          "Normal weight (18.5–24.9)",
-          "Overweight (25–29.9)",
-          "Obese (30–39.9)",
-          "Severely obese (≥40)"
-        ),
-        right = FALSE
-      )
-    ) %>%
-    
-# drop original cols
-  dplyr::select(-bmi.0.0, -alc_freq.0.0, -alc_status.0.0,)
-}  
-train_v1 <- process_alcohol_bmi(train_v1)
-test_v1  <- process_alcohol_bmi(test_v1)
-```
-
 ### Employment cats & one hot encoding
 
 ```{r, employment}
@@ -1435,7 +1297,7 @@ test_v1  <- process_employment(test_v1)
 ```{r}
 reorder_cols <- function(df){
 
-  first_cols <- c("eid", "cvd_event", "cvd_date")
+  first_cols <- c("eid", "cvd_event")
 
   other_cols <- setdiff(names(df), first_cols)
 
@@ -1454,14 +1316,13 @@ test_v1  <- reorder_cols(test_v1)
 outcome <- "cvd_event"
 covars  <- c("age_recr.0.0", "sex.0.0", "ethnicity.0.0",'bmi','sbp_avg','dbp_avg')
 drop_cols <- c(
-  "eid","cvd_date","date_death.0.0","date_lost_to_fup.0.0","date_recr.0.0",
-  "dob.0.0","mob","yob","assessment_centre_location.0.0",
+  "eid","date_lost_to_fup.0.0","date_recr.0.0","assessment_centre_location.0.0",
   outcome, covars
 )
 
-exposome_prefix <- c("^diet_", "^emp_", "^env_", "^med_", "^mh_", "^phys_", "^sed_", "^ses_", "^sleep_", "^smoke_")
+exposome_prefix <- c("^diet_", "^emp_", "^env_", "^mh_", "^phys_", "^sed_", "^ses_", "^sleep_", "^smoke_")
 exposome_single <- c(
-  "qualification.0.5","alcohol_category","employed"
+  "qualification.0.5","alcohol_category"
 )
 
 exposures <- names(train_v1)[

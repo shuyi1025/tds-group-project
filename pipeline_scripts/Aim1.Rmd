@@ -213,7 +213,8 @@ stab <- VariableSelection(
   ydata = y_tr,
   family = "binomial",
   verbose = TRUE,
-  penalty.factor = penalty_factor
+  penalty.factor = penalty_factor,
+  n_cat = 3
 )
 
 png(

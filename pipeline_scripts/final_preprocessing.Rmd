@@ -114,6 +114,10 @@ ukb_v2 <- ukb_v2 %>%
   dplyr::select(-cvd_case)
 
 table(ukb_v2$cvd_event)
+
+# drop cvd_date after washout step
+ukb_v2 <- ukb_v2 %>%
+  dplyr::select(-cvd_date)
 ```
 
 ## 3) PNA & IDK to NA conversion
@@ -347,15 +351,6 @@ ukb_v2 <- ukb_v2 %>%
   ) %>%
   dplyr::select(-dbp_automated.0.0, -dbp_automated.0.1)
 
-# average fev1 and fvc cols
-ukb_v2 <- ukb_v2 %>%
-  dplyr::mutate(
-    fev_avg = rowMeans(dplyr::across(c(fev1.0.0, fev1.0.1, fev1.0.2)), na.rm = TRUE),
-    dplyr::across(c(fvc.0.0, fvc.0.1, fvc.0.2), ~ as.numeric(as.character(.))),
-    fvc_avg = rowMeans(dplyr::across(c(fvc.0.0, fvc.0.1, fvc.0.2)), na.rm = TRUE)
-  ) %>%
-  dplyr::select(-fvc.0.0, -fvc.0.1, -fvc.0.2, -fev1.0.0, -fev1.0.1, -fev1.0.2)
-
 # drop data
 ukb_v2 <- ukb_v2 %>%
   dplyr::select(
@@ -484,7 +479,7 @@ process_alcohol_bmi <- function(df) {
     ) %>%
     
 # drop original cols
-  dplyr::select(-bmi.0.0, -alc_freq.0.0, -alc_status.0.0,)
+  dplyr::select(-bmi.0.0)
 }  
 
 ukb_v2 <- process_alcohol_bmi(ukb_v2)
@@ -516,9 +511,10 @@ high_missing <- column_missing_summary %>%
 high_missing
 # Check row-wise missingness
 
-exclude_vars <- c("cvd_date", 
-                  "date_death.0.0", 
-                  "date_lost_to_fup.0.0")
+exclude_vars <- intersect(
+  c("cvd_date", "date_death.0.0", "date_lost_to_fup.0.0"),
+  names(ukb_v2)
+)
 
 # Create subset excluding those columns
 ukb_subset <- ukb_v2[, !(names(ukb_v2) %in% exclude_vars)]
