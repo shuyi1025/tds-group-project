@@ -479,7 +479,7 @@ process_alcohol_bmi <- function(df) {
     ) %>%
     
 # drop original cols
-  dplyr::select(-bmi.0.0, -alc_status.0.0,)
+  dplyr::select(-bmi.0.0)
 }  
 
 ukb_v2 <- process_alcohol_bmi(ukb_v2)
