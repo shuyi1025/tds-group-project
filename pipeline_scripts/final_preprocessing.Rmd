@@ -40,6 +40,13 @@ ukb <- readRDS("../extraction_and_recoding/outputs/ukb_recoded.rds")
 cvd_event <- readRDS("cvd_events.rds")
 ```
 
+Generate output dir
+```{r}
+output_dir <- "../pipeline_outputs/pre_output"
+dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+```
+
+
 Addition of CVD_event, CVD_date and EID cols to data
 
 ```{r, prelim}
@@ -422,6 +429,8 @@ process_imd <- function(df) {
   return(df)
 }
 
+# remove assessment centre location (no longer needed)
+
 ukb_v2 <- process_imd(ukb_v2)
 
 ```
@@ -578,7 +587,7 @@ table1_df <- do.call(rbind, table1_list)
 print(table1_df, row.names = FALSE)
 
 # export
-write.csv(table1_df, "Table1_baseR.csv", row.names = FALSE)
+write.csv(table1_df, file.path(output_dir, "Table1_baseR.csv"), row.names = FALSE)
 ```
 
 ## 12) Imputation
@@ -592,9 +601,6 @@ Imputed datasets are saved to the designated output directory.
 ##### Save
 
 ```{r, save}
-output_dir <- "../pipeline_outputs"
-dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
-
 saveRDS(ukb_v2, file = file.path(output_dir, "ukb_raw.rds"))
 
 ```

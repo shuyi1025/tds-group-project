@@ -22,8 +22,12 @@ library(glmnet)
 library(pROC)
 library(ggplot2)
 library(sharp)
-ukb_train <- readRDS("../pipeline_outputs/train_final.rds")
-ukb_test <- readRDS("../pipeline_outputs/test_final.rds")
+
+ukb_train <- readRDS("../pipeline_outputs/post_imputation_output/train_final.rds")
+ukb_test  <- readRDS("../pipeline_outputs/post_imputation_output/test_final.rds")
+
+output_dir <- "../pipeline_outputs/aim1_output"
+dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 ```
 
 ## 1) Define outcome variable and prediction variables
@@ -143,6 +147,7 @@ cvfit <- cv.glmnet(
   nfolds = 10,             # 10-fold cross-validation
   type.measure = "auc",    # choose lambda based on AUC
   standardize = TRUE,      # standardize predictors internally
+  penalty.factor = penalty_factor
 )
 
 lambda_use <- cvfit$lambda.min
@@ -176,7 +181,7 @@ lassoplot <- ggplot(roc_df, aes(x = fpr, y = tpr)) +
   theme_minimal(base_size = 14)
 
 ggsave(
-  "../pipeline_outputs/lasso_ROC_curve.png",
+  file.path(output_dir, "lasso_ROC_curve.png"),
   plot = lassoplot,
   width = 8,
   height = 6,
@@ -195,7 +200,7 @@ coef_df <- data.frame(
   mutate(abs_beta = abs(beta)) %>%
   arrange(desc(abs_beta))
 
-saveRDS(coef_df, "../pipeline_outputs/coef_df.rds")
+saveRDS(coef_df, file.path(output_dir, "coef_df.rds"))
 ```
 
 ## 3) Stability selection
@@ -210,7 +215,7 @@ stab <- VariableSelection(
 )
 
 png(
-  filename = "../pipeline_outputs/CalibrationPlot.png",
+  filename = "../pipeline_outputs/aim1_output/CalibrationPlot.png",
   width = 2000,
   height = 1600,
   res = 300
@@ -220,7 +225,7 @@ CalibrationPlot(stab)
 
 dev.off()
 
-saveRDS(stab, "../pipeline_outputs/stab.rds")
+saveRDS(stab, file.path(output_dir, "stab.rds"))
 
 # Extract results
 sel_prop <- SelectionProportions(stab)
@@ -239,7 +244,7 @@ stable_vars_df <- sel_prop_df %>%
   filter(selection_proportion > best_pi) %>%
   arrange(desc(selection_proportion))
 
-saveRDS(sel_prop_df, "../pipeline_outputs/stable_vars_df.rds")
+saveRDS(sel_prop_df, "../pipeline_outputs/aim1_output/stable_vars_df.rds")
 
 
 # Refit final model on selected variables and baseline variables
@@ -294,7 +299,7 @@ stabsplot <- ggplot(roc_df, aes(x = fpr, y = tpr)) +
   theme_minimal()
 
 ggsave(
-  "../pipeline_outputs/stabs_ROC_curve.png",
+  "../pipeline_outputs/aim1_output/stabs_ROC_curve.png",
   plot = stabsplot,
   width = 8,
   height = 6,
@@ -343,11 +348,11 @@ train_baseline_ee_onehot <- dplyr::select(train_baseline_ee_onehot, -`sex.0.0Fem
 test_baseline_ee_onehot  <- dplyr::select(test_baseline_ee_onehot, -`sex.0.0Female`)
 
 write.csv(train_baseline_ee_onehot,
-          "../pipeline_outputs/train_baseline_ee_onehot.csv",
+          "../pipeline_outputs/aim1_output/train_baseline_ee_onehot.csv",
           row.names = FALSE)
 
 write.csv(test_baseline_ee_onehot,
-          "../pipeline_outputs/test_baseline_ee_onehot.csv",
+          "../pipeline_outputs/aim1_output/test_baseline_ee_onehot.csv",
           row.names = FALSE)
 
 ```
@@ -355,10 +360,6 @@ write.csv(test_baseline_ee_onehot,
 ## 5) Make ee_biomarker datasets
 ```{r}
 bio_vars <- c(
-  "assessment_centre_location.0.0",
-  "date_lost_to_fup.0.0",
-  "date_recr.0.0",
-  
   "blood_haematocrit_percentage.0.0",
   "blood_hb_conc.0.0",
   "blood_high_light_scatter_reticulocyte_count.0.0",
@@ -416,13 +417,23 @@ test_ee_biomarker_onehot  <- test_ee_biomarker_onehot[, c(front_cols, test_other
 
 write.csv(
   train_ee_biomarker_onehot,
-  "../pipeline_outputs/train_ee_biomarker_onehot.csv",
+  "../pipeline_outputs/aim1_output/train_ee_biomarker_onehot.csv",
   row.names = FALSE
 )
 
 write.csv(
   test_ee_biomarker_onehot,
-  "../pipeline_outputs/test_ee_biomarker_onehot.csv",
+  "../pipeline_outputs/aim1_output/test_ee_biomarker_onehot.csv",
   row.names = FALSE
+)
+
+saveRDS(
+  train_ee_biomarker_onehot,
+  "../pipeline_outputs/aim1_output/train_ee_biomarker_onehot.rds"
+)
+
+saveRDS(
+  test_ee_biomarker_onehot,
+  "../pipeline_outputs/aim1_output/test_ee_biomarker_onehot.rds"
 )
 ```

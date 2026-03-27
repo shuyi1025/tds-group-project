@@ -1,0 +1,1153 @@
+---
+title: "Aim2_3_Clustering_and_Biomarker_Characterisation"
+output: html_document
+date: "2026-03-26"
+---
+
+## 0) Setup
+
+```{r setup, message=FALSE, warning=FALSE}
+rm(list = ls())
+
+library(dplyr)
+library(ggplot2)
+library(uwot)
+library(glmnet)
+library(pROC)
+library(sharp)
+
+# -------------------------------------------------------------------------
+# Define input and output directories
+# -------------------------------------------------------------------------
+input_dir <- "../pipeline_outputs/aim1_output"
+out_dir   <- "../pipeline_outputs/aim2_3_output"
+dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+
+# -------------------------------------------------------------------------
+# Load previously prepared datasets
+# These datasets are assumed to already contain:
+#   1. selected one-hot encoded exposome variables
+#   2. biomarker variables
+# -------------------------------------------------------------------------
+train_dat <- readRDS(file.path(input_dir, "train_ee_biomarker_onehot.rds"))
+test_dat  <- readRDS(file.path(input_dir, "test_ee_biomarker_onehot.rds"))
+
+# Check dimensions
+dim(train_dat)
+dim(test_dat)
+
+# Inspect first few column names
+head(names(train_dat))
+
+```
+
+## 1) Define biomarker variables and display labels
+```{r}
+# -------------------------------------------------------------------------
+# Define biomarker variables expected in the saved datasets
+# -------------------------------------------------------------------------
+bio_vars <- c(
+  "blood_haematocrit_percentage.0.0",
+  "blood_hb_conc.0.0",
+  "blood_high_light_scatter_reticulocyte_count.0.0",
+  "blood_high_light_scatter_reticulocyte_percentage.0.0",
+  "blood_immature_reticulocyte_fraction.0.0",
+  "blood_lymphocyte_count.0.0",
+  "blood_lymphocyte_percentage.0.0",
+  "blood_mean_platelet_thrombocyte_volume.0.0",
+  "blood_mean_reticulocyte_volume.0.0",
+  "blood_monocyte_count.0.0",
+  "blood_monocyte_percentage.0.0",
+  "blood_neutrophill_count.0.0",
+  "blood_neutrophill_percentage.0.0",
+  "blood_platelet_count.0.0",
+  "blood_platelet_crit.0.0",
+  "blood_platelet_distribution_width.0.0",
+  "blood_rbc_count.0.0",
+  "blood_rbc_distribution_width.0.0",
+  "blood_reticulocyte_count.0.0",
+  "blood_reticulocyte_percentage.0.0",
+  "blood_wbc_count.0.0",
+  "biochem_apoa.0.0",
+  "biochem_apob.0.0",
+  "biochem_cholesterol.0.0",
+  "biochem_crp.0.0",
+  "biochem_glucose.0.0",
+  "biochem_hba1c.0.0",
+  "biochem_hdl.0.0",
+  "biochem_ldl.0.0",
+  "biochem_lipoa.0.0",
+  "biochem_sodium_urine.0.0",
+  "biochem_triglycerides.0.0"
+)
+
+# Keep only biomarkers present in both datasets
+bio_vars <- Reduce(intersect, list(bio_vars, names(train_dat), names(test_dat)))
+
+# -------------------------------------------------------------------------
+# Define biomarker names for tables and plots
+# Names = original variable names
+# Values = display labels
+# -------------------------------------------------------------------------
+bio_labels <- c(
+  "blood_haematocrit_percentage.0.0" = "Haematocrit",
+  "blood_hb_conc.0.0" = "Haemoglobin",
+  "blood_high_light_scatter_reticulocyte_count.0.0" = "High light scatter reticulocyte count",
+  "blood_high_light_scatter_reticulocyte_percentage.0.0" = "High light scatter reticulocyte percentage",
+  "blood_immature_reticulocyte_fraction.0.0" = "Immature reticulocyte fraction",
+  "blood_lymphocyte_count.0.0" = "Lymphocyte count",
+  "blood_lymphocyte_percentage.0.0" = "Lymphocyte percentage",
+  "blood_mean_platelet_thrombocyte_volume.0.0" = "Mean platelet volume",
+  "blood_mean_reticulocyte_volume.0.0" = "Mean reticulocyte volume",
+  "blood_monocyte_count.0.0" = "Monocyte count",
+  "blood_monocyte_percentage.0.0" = "Monocyte percentage",
+  "blood_neutrophill_count.0.0" = "Neutrophil count",
+  "blood_neutrophill_percentage.0.0" = "Neutrophil percentage",
+  "blood_platelet_count.0.0" = "Platelet count",
+  "blood_platelet_crit.0.0" = "Plateletcrit",
+  "blood_platelet_distribution_width.0.0" = "Platelet distribution width",
+  "blood_rbc_count.0.0" = "Red blood cell count",
+  "blood_rbc_distribution_width.0.0" = "Red blood cell distribution width",
+  "blood_reticulocyte_count.0.0" = "Reticulocyte count",
+  "blood_reticulocyte_percentage.0.0" = "Reticulocyte percentage",
+  "blood_wbc_count.0.0" = "White blood cell count",
+  "biochem_apoa.0.0" = "Apolipoprotein A",
+  "biochem_apob.0.0" = "Apolipoprotein B",
+  "biochem_cholesterol.0.0" = "Cholesterol",
+  "biochem_crp.0.0" = "C-reactive protein",
+  "biochem_glucose.0.0" = "Glucose",
+  "biochem_hba1c.0.0" = "HbA1c",
+  "biochem_hdl.0.0" = "HDL cholesterol",
+  "biochem_ldl.0.0" = "LDL cholesterol",
+  "biochem_lipoa.0.0" = "Lipoprotein(a)",
+  "biochem_sodium_urine.0.0" = "Urinary sodium",
+  "biochem_triglycerides.0.0" = "Triglycerides"
+)
+
+# Restrict label vector to biomarkers that are actually being used
+bio_labels <- bio_labels[bio_vars]
+
+# Helper function:
+# returns readable biomarker labels where available,
+# otherwise falls back to the original variable name
+pretty_bio_names <- function(x) {
+  ifelse(x %in% names(bio_labels), bio_labels[x], x)
+}
+```
+
+###2) Define clustering variables
+```{r}
+# -------------------------------------------------------------------------
+# For clustering, use all columns except:
+#   - identifiers / outcomes
+#   - biomarker variables
+# -------------------------------------------------------------------------
+exclude_for_clustering <- c("eid", "cvd_event", bio_vars)
+
+cluster_vars <- setdiff(names(train_dat), exclude_for_clustering)
+
+```
+
+###3) Prepare matrices for clustering
+```{r}
+# -------------------------------------------------------------------------
+# Extract clustering matrices from the selected exposome variables only
+# -------------------------------------------------------------------------
+X_tr <- as.matrix(train_dat[, cluster_vars, drop = FALSE])
+X_te <- as.matrix(test_dat[, cluster_vars, drop = FALSE])
+
+# Ensure all values are numeric
+storage.mode(X_tr) <- "numeric"
+storage.mode(X_te) <- "numeric"
+
+# Remove zero-variance columns based on training data
+keep_cols <- apply(X_tr, 2, sd, na.rm = TRUE) > 0
+
+X_tr <- X_tr[, keep_cols, drop = FALSE]
+X_te <- X_te[, colnames(X_tr), drop = FALSE]
+
+# Standardise test data using training-set parameters
+X_tr_scaled <- scale(X_tr)
+
+center_vals <- attr(X_tr_scaled, "scaled:center")
+scale_vals  <- attr(X_tr_scaled, "scaled:scale")
+
+X_te_scaled <- scale(X_te, center = center_vals, scale = scale_vals)
+
+dim(X_tr_scaled)
+dim(X_te_scaled)
+```
+
+
+### 5) choosing number of clusters
+```{r}
+# -------------------------------------------------------------------------
+# Manual silhouette function
+# -------------------------------------------------------------------------
+manual_silhouette_mean <- function(x, clusters) {
+  x <- as.matrix(x)
+  clusters <- as.integer(clusters)
+
+  dmat <- as.matrix(dist(x))
+  n <- nrow(dmat)
+  sil <- numeric(n)
+
+  for (i in seq_len(n)) {
+    own_clust <- clusters[i]
+
+    own_idx <- which(clusters == own_clust & seq_len(n) != i)
+
+    if (length(own_idx) == 0) {
+      a_i <- 0
+    } else {
+      a_i <- mean(dmat[i, own_idx])
+    }
+
+    other_clusts <- setdiff(unique(clusters), own_clust)
+
+    if (length(other_clusts) == 0) {
+      b_i <- 0
+    } else {
+      mean_dists_other <- sapply(other_clusts, function(cl) {
+        mean(dmat[i, clusters == cl])
+      })
+      b_i <- min(mean_dists_other)
+    }
+
+    if (max(a_i, b_i) == 0) {
+      sil[i] <- 0
+    } else {
+      sil[i] <- (b_i - a_i) / max(a_i, b_i)
+    }
+  }
+
+  mean(sil)
+}
+
+# -------------------------------------------------------------------------
+# Evaluate candidate values of k on a subsample for efficiency
+# -------------------------------------------------------------------------
+set.seed(123)
+
+idx <- sample(nrow(X_tr_scaled), min(5000, nrow(X_tr_scaled)))
+X_sub <- X_tr_scaled[idx, , drop = FALSE]
+
+wss <- numeric(10)
+sil_scores <- rep(NA_real_, 10)
+
+for (k in 2:10) {
+  km <- kmeans(X_sub, centers = k, nstart = 20)
+
+  wss[k] <- km$tot.withinss
+  sil_scores[k] <- manual_silhouette_mean(X_sub, km$cluster)
+
+  cat(
+    "k =", k,
+    "| WCSS =", round(wss[k], 2),
+    "| Silhouette =", round(sil_scores[k], 4), "\n"
+  )
+}
+
+k_eval_df <- data.frame(
+  k = 2:10,
+  WCSS = wss[2:10],
+  Silhouette = sil_scores[2:10]
+)
+
+print(k_eval_df)
+
+saveRDS(k_eval_df, file.path(out_dir, "k_evaluation.rds"))
+write.csv(k_eval_df, file.path(out_dir, "k_evaluation.csv"), row.names = FALSE)
+
+
+# -------------------------------------------------------------------------
+# Save elbow plot
+# -------------------------------------------------------------------------
+png(
+  filename = file.path(out_dir, "elbow_plot.png"),
+  width = 1800,
+  height = 1400,
+  res = 200
+)
+
+plot(
+  2:10, wss[2:10],
+  type = "b",                 # both points and lines
+  pch = 19,                  # solid circles
+  xlab = "Number of clusters (k)",
+  ylab = "Total within-cluster sum of squares",
+  main = "Elbow Method"
+)
+
+dev.off()
+
+
+# -------------------------------------------------------------------------
+# Save silhouette plot
+# -------------------------------------------------------------------------
+png(
+  filename = file.path(out_dir, "silhouette_plot.png"),
+  width = 1800,
+  height = 1400,
+  res = 200
+)
+
+plot(
+  2:10, sil_scores[2:10],
+  type = "b",
+  pch = 19,
+  xlab = "Number of clusters (k)",
+  ylab = "Average silhouette width",
+  main = "Manual Silhouette Method"
+)
+
+dev.off()
+```
+
+will need to choose number of clusters after run on UKB dataset and then run from here>
+### 6) Fit final clustering
+```{r}
+# -------------------------------------------------------------------------
+# Fit final k-means model
+# Replace centers = 4 with your chosen value of k after inspection
+# -------------------------------------------------------------------------
+set.seed(123)
+
+km_final <- kmeans(
+  X_tr_scaled,
+  centers = 4, #change after run on UK biobank
+  nstart = 50,
+  iter.max = 100
+)
+
+# -------------------------------------------------------------------------
+# Function to assign each test observation to the nearest training centroid
+# -------------------------------------------------------------------------
+assign_cluster <- function(x, centers) {
+  apply(x, 1, function(row) {
+    which.min(colSums((t(centers) - row)^2))
+  })
+}
+
+# -------------------------------------------------------------------------
+# Assign cluster labels to training and test data
+# -------------------------------------------------------------------------
+train_cluster <- km_final$cluster
+test_cluster  <- assign_cluster(X_te_scaled, km_final$centers)
+
+table(train_cluster)
+table(test_cluster)
+
+# -------------------------------------------------------------------------
+# Save clustered datasets for downstream analyses
+# -------------------------------------------------------------------------
+train_clustered <- train_dat
+test_clustered  <- test_dat
+
+train_clustered$cluster <- train_cluster
+test_clustered$cluster  <- test_cluster
+
+saveRDS(train_clustered, file.path(out_dir, "train_ee_biomarker_clustered.rds"))
+saveRDS(test_clustered,  file.path(out_dir, "test_ee_biomarker_clustered.rds"))
+
+write.csv(train_clustered, file.path(out_dir, "train_ee_biomarker_clustered.csv"), row.names = FALSE)
+write.csv(test_clustered,  file.path(out_dir, "test_ee_biomarker_clustered.csv"), row.names = FALSE)
+```
+### 7) Evaluate and visualise clusters
+```{r}
+# -------------------------------------------------------------------------
+# UMAP visualisation of clustering structure (training data)
+# -------------------------------------------------------------------------
+set.seed(123)
+
+umap_res <- umap(
+  X_tr_scaled,
+  n_neighbors = 15,
+  min_dist = 0.3,
+  metric = "euclidean"
+)
+
+# -------------------------------------------------------------------------
+# Save UMAP object for reproducibility
+# -------------------------------------------------------------------------
+saveRDS(umap_res, file.path(out_dir, "umap_res.rds"))
+
+# -------------------------------------------------------------------------
+# Save UMAP plot to output directory
+# -------------------------------------------------------------------------
+png(
+  filename = file.path(out_dir, "umap_clusters.png"),
+  width = 1800,
+  height = 1400,
+  res = 200
+)
+
+plot(
+  umap_res,
+  col = factor(train_cluster),
+  pch = 16,
+  xlab = "UMAP1",
+  ylab = "UMAP2",
+  main = "UMAP of Exposome Variables (coloured by cluster)"
+)
+
+legend(
+  "topright",
+  legend = levels(factor(train_cluster)),
+  col = seq_along(levels(factor(train_cluster))),
+  pch = 16,
+  title = "Cluster"
+)
+
+dev.off()
+
+
+# -------------------------------------------------------------------------
+# Heatmap of cluster centroids
+# Rows = variables, Columns = clusters
+# -------------------------------------------------------------------------
+graphics.off()
+
+# Extract cluster centroids from final k-means model
+centroid_mat <- km_final$centers
+
+# Transpose: rows = variables, columns = clusters
+heat_mat <- t(centroid_mat)
+
+# -------------------------------------------------------------------------
+# Select top variables with highest variability across clusters
+# -------------------------------------------------------------------------
+var_across_clusters <- apply(heat_mat, 1, sd)
+top_n <- 20
+
+top_vars <- names(sort(var_across_clusters, decreasing = TRUE))[1:min(top_n, nrow(heat_mat))]
+
+print(top_vars)
+
+# Subset matrix
+heat_mat_top <- heat_mat[top_vars, , drop = FALSE]
+
+# Set cluster column names
+colnames(heat_mat_top) <- paste0("Cluster ", seq_len(ncol(heat_mat_top)))
+
+# -------------------------------------------------------------------------
+# Save heatmap matrix
+# -------------------------------------------------------------------------
+saveRDS(heat_mat_top, file.path(out_dir, "cluster_centroid_heatmap_matrix.rds"))
+
+write.csv(
+  data.frame(variable = rownames(heat_mat_top), heat_mat_top, check.names = FALSE),
+  file.path(out_dir, "cluster_centroid_heatmap_matrix.csv"),
+  row.names = FALSE
+)
+
+# -------------------------------------------------------------------------
+# Save heatmap figure
+# -------------------------------------------------------------------------
+png(
+  filename = file.path(out_dir, "cluster_centroid_heatmap.png"),
+  width = 2200,
+  height = 1800,
+  res = 220
+)
+
+heatmap(
+  heat_mat_top,
+  Rowv = TRUE,
+  Colv = NA,
+  scale = "none",
+  labRow = rownames(heat_mat_top),  
+  labCol = colnames(heat_mat_top),
+  col = colorRampPalette(c("blue", "white", "red"))(100),
+  margins = c(10, 25),
+  cexRow = 0.8,
+  cexCol = 1.2,
+  main = paste0("Exposure patterns across ", ncol(heat_mat_top), " clusters")
+)
+
+dev.off()
+```
+
+###
+Aim 3
+###
+
+### 1) Biomarker summary by cluster 
+```{r}
+# -------------------------------------------------------------------------
+# Build biomarker data frame using the clustered training dataset
+# -------------------------------------------------------------------------
+bio_df <- train_clustered[, c(bio_vars, "cluster"), drop = FALSE]
+
+for (v in bio_vars) {
+  bio_df[[v]] <- as.numeric(bio_df[[v]])
+}
+
+bio_df$cluster <- factor(bio_df$cluster)
+
+bio_mean <- aggregate(
+  bio_df[, bio_vars, drop = FALSE],
+  by = list(cluster = bio_df$cluster),
+  FUN = function(x) mean(x, na.rm = TRUE)
+)
+
+print(bio_mean)
+
+saveRDS(bio_mean, file.path(out_dir, "biomarker_cluster_means.rds"))
+write.csv(bio_mean, file.path(out_dir, "biomarker_cluster_means.csv"), row.names = FALSE)
+```
+## 2) ANOVA for biomarker differences across clusters
+```{r}
+bio_anova <- lapply(bio_vars, function(v) {
+
+  df <- data.frame(
+    value = bio_df[[v]],
+    cluster = factor(bio_df$cluster)
+  )
+
+  model <- aov(value ~ cluster, data = df)
+  p_val <- summary(model)[[1]][["Pr(>F)"]][1]
+
+  data.frame(
+    biomarker = v,
+    p_value = p_val
+  )
+})
+
+# Combine list into a single data frame
+bio_anova <- do.call(rbind, bio_anova)
+
+# Adjust p-values (Benjamini-Hochberg)
+bio_anova$p_adj_BH <- p.adjust(bio_anova$p_value, method = "BH")
+
+# Add readable biomarker labels
+bio_anova$biomarker_label <- pretty_bio_names(bio_anova$biomarker)
+
+# Order by adjusted p-value
+bio_anova <- bio_anova[order(bio_anova$p_adj_BH), ]
+
+# Reorder columns
+bio_anova <- bio_anova[, c("biomarker", "biomarker_label", "p_value", "p_adj_BH")]
+
+print(bio_anova)
+
+# Save outputs
+saveRDS(bio_anova, file.path(out_dir, "biomarker_anova_results.rds"))
+write.csv(bio_anova, file.path(out_dir, "biomarker_anova_results.csv"), row.names = FALSE)
+```
+
+### 3) Heatmap of top varying biomarkers across clusters for visualisation
+```{r}
+# -------------------------------------------------------------------------
+# Convert cluster-level biomarker means into a matrix
+# Rows = clusters
+# Columns = biomarkers
+# -------------------------------------------------------------------------
+bio_mat <- as.matrix(bio_mean[, -1, drop = FALSE])
+rownames(bio_mat) <- paste0("Cluster ", bio_mean$cluster)
+
+# -------------------------------------------------------------------------
+# Identify biomarkers with the greatest variation across clusters
+# -------------------------------------------------------------------------
+bio_var_between <- apply(bio_mat, 2, var, na.rm = TRUE)
+
+top_n <- 15
+top_bio <- names(sort(bio_var_between, decreasing = TRUE))[1:min(top_n, length(bio_var_between))]
+
+print(top_bio)
+
+# -------------------------------------------------------------------------
+# Scale biomarker means across clusters for visual comparison
+# This is for display only, not for inference
+# -------------------------------------------------------------------------
+bio_mat_scaled <- scale(bio_mat)
+
+# -------------------------------------------------------------------------
+# Create row labels using readable biomarker names
+# -------------------------------------------------------------------------
+row_labs <- pretty_bio_names(top_bio)
+
+# -------------------------------------------------------------------------
+# Save the underlying matrix used for the heatmap
+# -------------------------------------------------------------------------
+bio_heatmap_mat <- t(bio_mat_scaled[, top_bio, drop = FALSE])
+
+saveRDS(
+  bio_heatmap_mat,
+  file.path(out_dir, "biomarker_heatmap_matrix.rds")
+)
+
+write.csv(
+  data.frame(
+    biomarker = rownames(bio_heatmap_mat),
+    bio_heatmap_mat,
+    check.names = FALSE
+  ),
+  file.path(out_dir, "biomarker_heatmap_matrix.csv"),
+  row.names = FALSE
+)
+
+# -------------------------------------------------------------------------
+# Save heatmap figure to output directory
+# -------------------------------------------------------------------------
+png(
+  filename = file.path(out_dir, "biomarker_heatmap_top_varying.png"),
+  width = 2200,
+  height = 1800,
+  res = 220
+)
+
+heatmap(
+  bio_heatmap_mat,
+  Rowv = NA,
+  Colv = NA,
+  scale = "none",
+  labRow = row_labs,
+  labCol = colnames(bio_heatmap_mat),
+  col = colorRampPalette(c("blue", "white", "red"))(100),
+  margins = c(10, 20),
+  cexRow = 0.9,
+  cexCol = 1.1,
+  main = "Biomarker levels across clusters"
+)
+
+dev.off()
+```
+###using lasso and stability for biomarker selection
+
+## 4) Set output directory for one-vs-rest biomarker models
+```{r}
+# -------------------------------------------------------------------------
+# Create a subdirectory for the biomarker one-vs-rest models
+# -------------------------------------------------------------------------
+model_out_dir <- file.path(out_dir, "cluster_biomarker_one_vs_rest")
+
+if (!dir.exists(model_out_dir)) {
+  dir.create(model_out_dir, recursive = TRUE)
+}
+```
+
+## 5) Prepare biomarker modelling datasets
+```{r}
+# -------------------------------------------------------------------------
+# Build biomarker-only data frames from the clustered datasets
+# -------------------------------------------------------------------------
+bio_train <- as.data.frame(train_clustered[, c(bio_vars, "cluster"), drop = FALSE])
+bio_test  <- as.data.frame(test_clustered[, c(bio_vars, "cluster"), drop = FALSE])
+
+# -------------------------------------------------------------------------
+# Ensure cluster labels are factors with consistent levels
+# -------------------------------------------------------------------------
+bio_train$cluster <- factor(bio_train$cluster)
+bio_test$cluster  <- factor(bio_test$cluster, levels = levels(bio_train$cluster))
+
+# -------------------------------------------------------------------------
+# Ensure biomarker columns are numeric
+# -------------------------------------------------------------------------
+for (v in bio_vars) {
+  bio_train[[v]] <- as.numeric(bio_train[[v]])
+  bio_test[[v]]  <- as.numeric(bio_test[[v]])
+}
+
+# -------------------------------------------------------------------------
+# Remove biomarkers with zero variance in the training set
+# -------------------------------------------------------------------------
+keep_bio <- sapply(
+  bio_train[, bio_vars, drop = FALSE],
+  function(x) sd(x, na.rm = TRUE) > 0
+)
+
+bio_vars_use <- bio_vars[keep_bio]
+
+# -------------------------------------------------------------------------
+# Restrict to retained biomarkers plus cluster
+# -------------------------------------------------------------------------
+bio_train <- bio_train[, c(bio_vars_use, "cluster"), drop = FALSE]
+bio_test  <- bio_test[, c(bio_vars_use, "cluster"), drop = FALSE]
+
+# -------------------------------------------------------------------------
+# Use complete cases only for biomarker model fitting
+# -------------------------------------------------------------------------
+bio_train_cc <- bio_train[complete.cases(bio_train), , drop = FALSE]
+bio_test_cc  <- bio_test[complete.cases(bio_test), , drop = FALSE]
+
+# -------------------------------------------------------------------------
+# Convert biomarker data frames to model matrices
+# -------------------------------------------------------------------------
+X_bio_tr <- as.matrix(bio_train_cc[, bio_vars_use, drop = FALSE])
+X_bio_te <- as.matrix(bio_test_cc[, bio_vars_use, drop = FALSE])
+
+cluster_levels <- levels(bio_train_cc$cluster)
+
+dim(X_bio_tr)
+dim(X_bio_te)
+cluster_levels
+```
+
+## 6) Run one-vs-rest biomarker models for each cluster
+```{r}
+# -------------------------------------------------------------------------
+# Initialise storage objects
+# -------------------------------------------------------------------------
+summary_results <- list()
+roc_list <- list()
+stable_direction_list <- list()
+
+# -------------------------------------------------------------------------
+# Fit one-vs-rest models for each cluster
+# -------------------------------------------------------------------------
+for (target_cluster in cluster_levels) {
+
+  cat("\n====================================================\n")
+  cat("Running biomarker model for Cluster", target_cluster, " vs rest\n")
+  cat("====================================================\n")
+
+  # -----------------------------------------------------------------------
+  # Define binary outcomes for one-vs-rest classification
+  # -----------------------------------------------------------------------
+  y_tr <- ifelse(as.character(bio_train_cc$cluster) == target_cluster, 1, 0)
+  y_te <- ifelse(as.character(bio_test_cc$cluster)  == target_cluster, 1, 0)
+
+  cat("Training outcome counts:\n")
+  print(table(y_tr))
+
+  cat("Test outcome counts:\n")
+  print(table(y_te))
+
+  # -----------------------------------------------------------------------
+  # Run stability selection
+  # -----------------------------------------------------------------------
+  set.seed(123)
+
+  stab <- VariableSelection(
+    xdata = X_bio_tr,
+    ydata = y_tr,
+    family = "binomial",
+    verbose = TRUE
+  )
+
+  saveRDS(
+    stab,
+    file.path(model_out_dir, paste0("stab_cluster", target_cluster, "_vs_rest.rds"))
+  )
+
+  png(
+    filename = file.path(model_out_dir, paste0("calibrationplot_cluster", target_cluster, "_vs_rest.png")),
+    width = 1800,
+    height = 1400,
+    res = 200
+  )
+
+  CalibrationPlot(stab)
+
+  dev.off()
+
+  # -----------------------------------------------------------------------
+  # Extract selection proportions
+  # -----------------------------------------------------------------------
+  sel_prop <- SelectionProportions(stab)
+
+  sel_prop_df <- data.frame(
+    variable = names(sel_prop),
+    selection_proportion = as.numeric(sel_prop)
+  ) %>%
+    arrange(desc(selection_proportion))
+
+  sel_prop_df$variable_label <- pretty_bio_names(sel_prop_df$variable)
+
+  saveRDS(
+    sel_prop_df,
+    file.path(model_out_dir, paste0("sel_prop_df_cluster", target_cluster, "_vs_rest.rds"))
+  )
+
+  write.csv(
+    sel_prop_df,
+    file.path(model_out_dir, paste0("sel_prop_df_cluster", target_cluster, "_vs_rest.csv")),
+    row.names = FALSE
+  )
+
+  # -----------------------------------------------------------------------
+  # Extract best stability threshold
+  # -----------------------------------------------------------------------
+  best <- Argmax(stab)
+  print(best)
+
+  best_pi <- best[1, "pi"]
+
+  stable_vars_df <- sel_prop_df %>%
+    filter(selection_proportion > best_pi) %>%
+    arrange(desc(selection_proportion))
+
+  saveRDS(
+    stable_vars_df,
+    file.path(model_out_dir, paste0("stable_vars_df_cluster", target_cluster, "_vs_rest.rds"))
+  )
+
+  write.csv(
+    stable_vars_df,
+    file.path(model_out_dir, paste0("stable_vars_df_cluster", target_cluster, "_vs_rest.csv")),
+    row.names = FALSE
+  )
+
+  stable_vars <- intersect(stable_vars_df$variable, colnames(X_bio_tr))
+
+  # -----------------------------------------------------------------------
+  # Handle case where too few stable variables are selected
+  # -----------------------------------------------------------------------
+  if (length(stable_vars) < 2) {
+
+    cat("Fewer than 2 stable biomarkers selected for Cluster", target_cluster, " vs rest\n")
+
+    summary_results[[as.character(target_cluster)]] <- data.frame(
+      cluster = target_cluster,
+      n_stable_vars = length(stable_vars),
+      best_pi = best_pi,
+      auc = NA_real_
+    )
+
+    next
+  }
+
+  # -----------------------------------------------------------------------
+  # Refit final LASSO using stable biomarkers only
+  # -----------------------------------------------------------------------
+  X_tr_final <- X_bio_tr[, stable_vars, drop = FALSE]
+  X_te_final <- X_bio_te[, stable_vars, drop = FALSE]
+
+  set.seed(123)
+
+  final_cvfit <- cv.glmnet(
+    x = X_tr_final,
+    y = y_tr,
+    family = "binomial",
+    alpha = 1,
+    nfolds = 10,
+    type.measure = "auc",
+    standardize = TRUE
+  )
+
+  saveRDS(
+    final_cvfit,
+    file.path(model_out_dir, paste0("final_cvfit_cluster", target_cluster, "_vs_rest.rds"))
+  )
+
+  # -----------------------------------------------------------------------
+  # Evaluate model on the test set
+  # -----------------------------------------------------------------------
+  test_prob <- as.numeric(
+    predict(final_cvfit, newx = X_te_final, s = "lambda.min", type = "response")
+  )
+
+  roc_obj <- roc(y_te, test_prob, quiet = TRUE)
+  auc_val <- as.numeric(auc(roc_obj))
+
+  roc_df <- data.frame(
+    tpr = roc_obj$sensitivities,
+    fpr = 1 - roc_obj$specificities,
+    cluster = paste0("Cluster ", target_cluster, " (AUC = ", round(auc_val, 3), ")")
+  )
+
+  roc_list[[as.character(target_cluster)]] <- roc_df
+
+  # -----------------------------------------------------------------------
+  # Save individual ROC curve
+  # -----------------------------------------------------------------------
+  p <- ggplot(roc_df, aes(x = fpr, y = tpr)) +
+    geom_line(linewidth = 1.2) +
+    geom_abline(linetype = "dashed", color = "grey") +
+    labs(
+      title = paste0("ROC Curve - Cluster ", target_cluster, " vs rest"),
+      x = "False Positive Rate",
+      y = "True Positive Rate"
+    ) +
+    theme_minimal()
+
+  ggsave(
+    filename = file.path(model_out_dir, paste0("roc_cluster", target_cluster, "_vs_rest.png")),
+    plot = p,
+    width = 8,
+    height = 6,
+    dpi = 300
+  )
+
+  # -----------------------------------------------------------------------
+  # Extract non-zero coefficients from the final model
+  # -----------------------------------------------------------------------
+  coef_mat <- as.matrix(coef(final_cvfit, s = "lambda.min"))
+
+  coef_df <- data.frame(
+    term = rownames(coef_mat),
+    beta = as.numeric(coef_mat[, 1]),
+    row.names = NULL
+  ) %>%
+    filter(term != "(Intercept)", beta != 0) %>%
+    mutate(
+      term_label = pretty_bio_names(term),
+      odds_ratio = exp(beta),
+      abs_beta = abs(beta),
+      direction = ifelse(
+        beta > 0,
+        paste0("higher in Cluster ", target_cluster),
+        paste0("lower in Cluster ", target_cluster)
+      )
+    ) %>%
+    arrange(desc(abs_beta))
+
+  saveRDS(
+    coef_df,
+    file.path(model_out_dir, paste0("coef_df_cluster", target_cluster, "_vs_rest.rds"))
+  )
+
+  write.csv(
+    coef_df,
+    file.path(model_out_dir, paste0("coef_df_cluster", target_cluster, "_vs_rest.csv")),
+    row.names = FALSE
+  )
+
+  # -----------------------------------------------------------------------
+  # Create per-cluster summary of stable biomarkers with direction
+  # -----------------------------------------------------------------------
+stable_direction_df <- stable_vars_df %>%
+  dplyr::select(variable, selection_proportion, variable_label) %>%
+  dplyr::left_join(
+    coef_df %>%
+      dplyr::select(
+        variable = term,
+        beta,
+        odds_ratio,
+        direction
+      ),
+    by = "variable"
+  ) %>%
+  dplyr::filter(!is.na(beta)) %>%
+  dplyr::mutate(cluster = target_cluster) %>%
+  dplyr::select(
+    cluster,
+    variable,
+    variable_label,
+    selection_proportion,
+    beta,
+    odds_ratio,
+    direction
+  ) %>%
+  dplyr::arrange(desc(selection_proportion))
+
+  stable_direction_list[[as.character(target_cluster)]] <- stable_direction_df
+
+  saveRDS(
+    stable_direction_df,
+    file.path(model_out_dir, paste0("stable_direction_df_cluster", target_cluster, "_vs_rest.rds"))
+  )
+
+  write.csv(
+    stable_direction_df,
+    file.path(model_out_dir, paste0("stable_direction_df_cluster", target_cluster, "_vs_rest.csv")),
+    row.names = FALSE
+  )
+
+  # -----------------------------------------------------------------------
+  # Store summary results
+  # -----------------------------------------------------------------------
+  summary_results[[as.character(target_cluster)]] <- data.frame(
+    cluster = target_cluster,
+    n_stable_vars = length(stable_vars),
+    best_pi = best_pi,
+    auc = auc_val
+  )
+}
+```
+
+---
+
+## 7) Save summary across all cluster biomarker models
+```{r}
+summary_df <- bind_rows(summary_results) %>%
+  arrange(as.numeric(cluster))
+
+print(summary_df)
+
+saveRDS(
+  summary_df,
+  file.path(model_out_dir, "summary_all_cluster_models.rds")
+)
+
+write.csv(
+  summary_df,
+  file.path(model_out_dir, "summary_all_cluster_models.csv"),
+  row.names = FALSE
+)
+
+```
+
+## 8) Save combined summary of stable biomarkers across all clusters
+```{r}
+if (length(stable_direction_list) > 0) {
+
+  stable_direction_summary_df <- dplyr::bind_rows(stable_direction_list) %>%
+    dplyr::arrange(as.numeric(cluster), dplyr::desc(selection_proportion))
+
+  print(stable_direction_summary_df)
+
+  saveRDS(
+    stable_direction_summary_df,
+    file.path(model_out_dir, "stable_direction_summary_all_clusters.rds")
+  )
+
+  write.csv(
+    stable_direction_summary_df,
+    file.path(model_out_dir, "stable_direction_summary_all_clusters.csv"),
+    row.names = FALSE
+  )
+}
+```
+
+## 9) Save overlayed ROC curve across all one-vs-rest models
+
+```{r}
+if (length(roc_list) > 0) {
+
+  roc_all <- do.call(rbind, roc_list)
+
+  p_overlay <- ggplot(roc_all, aes(x = fpr, y = tpr, colour = cluster)) +
+    geom_line(linewidth = 1.2) +
+    geom_abline(linetype = "dashed", colour = "grey") +
+    labs(
+      title = "Overlayed ROC Curves for Cluster Classification (One-vs-Rest)",
+      x = "False Positive Rate",
+      y = "True Positive Rate",
+      colour = "Model"
+    ) +
+    theme_minimal()
+
+  ggsave(
+    filename = file.path(model_out_dir, "roc_overlay_all_clusters.png"),
+    plot = p_overlay,
+    width = 8.5,
+    height = 6.5,
+    dpi = 300
+  )
+}
+```
+
+
+## 10) Save reduced train and test datasets for downstream analyses
+```{r}
+final_data_dir <- file.path(out_dir, "final_datasets")
+dir.create(final_data_dir, recursive = TRUE, showWarnings = FALSE)
+
+# -------------------------------------------------------------------------
+# Extract the union of biomarkers stably selected across all clusters
+# -------------------------------------------------------------------------
+stable_biomarkers_all <- unique(stable_direction_summary_df$variable)
+
+# Keep only biomarkers that are actually present in the clustered datasets
+stable_biomarkers_all <- intersect(stable_biomarkers_all, names(train_clustered))
+
+# -------------------------------------------------------------------------
+# Define the selected exposome variables to retain
+# These are the variables used for clustering after zero-variance filtering
+# -------------------------------------------------------------------------
+selected_ee_vars <- colnames(X_tr)
+
+# Keep only those that are present in both clustered datasets
+selected_ee_vars <- Reduce(
+  intersect,
+  list(selected_ee_vars, names(train_clustered), names(test_clustered))
+)
+
+# -------------------------------------------------------------------------
+# Define core columns to retain
+# -------------------------------------------------------------------------
+core_cols <- c("eid", "cvd_event", "cluster")
+core_cols <- Reduce(
+  intersect,
+  list(core_cols, names(train_clustered), names(test_clustered))
+)
+
+# -------------------------------------------------------------------------
+# Combine all columns to retain in the final reduced datasets
+# -------------------------------------------------------------------------
+final_reduced_cols <- unique(c(
+  core_cols,
+  selected_ee_vars,
+  stable_biomarkers_all
+))
+
+# Keep only columns present in both datasets
+final_reduced_cols <- Reduce(
+  intersect,
+  list(final_reduced_cols, names(train_clustered), names(test_clustered))
+)
+
+# -------------------------------------------------------------------------
+# Subset train and test datasets
+# -------------------------------------------------------------------------
+train_ee_bio_stable_allclusters <- train_clustered[, final_reduced_cols, drop = FALSE]
+test_ee_bio_stable_allclusters  <- test_clustered[, final_reduced_cols, drop = FALSE]
+
+# -------------------------------------------------------------------------
+# Reorder columns so key identifiers come first
+# -------------------------------------------------------------------------
+front_cols <- intersect(c("eid", "cvd_event", "cluster"), final_reduced_cols)
+other_cols <- setdiff(final_reduced_cols, front_cols)
+
+train_ee_bio_stable_allclusters <- train_ee_bio_stable_allclusters[, c(front_cols, other_cols), drop = FALSE]
+test_ee_bio_stable_allclusters  <- test_ee_bio_stable_allclusters[, c(front_cols, other_cols), drop = FALSE]
+
+# -------------------------------------------------------------------------
+# Inspect dimensions
+# -------------------------------------------------------------------------
+dim(train_ee_bio_stable_allclusters)
+dim(test_ee_bio_stable_allclusters)
+
+# -------------------------------------------------------------------------
+# Save reusable downstream datasets
+# -------------------------------------------------------------------------
+saveRDS(
+  train_ee_bio_stable_allclusters,
+  file.path(final_data_dir, "train_ee_bio_stable_allclusters.rds")
+)
+
+saveRDS(
+  test_ee_bio_stable_allclusters,
+  file.path(final_data_dir, "test_ee_bio_stable_allclusters.rds")
+)
+
+write.csv(
+  train_ee_bio_stable_allclusters,
+  file.path(final_data_dir, "train_ee_bio_stable_allclusters.csv"),
+  row.names = FALSE
+)
+
+write.csv(
+  test_ee_bio_stable_allclusters,
+  file.path(final_data_dir, "test_ee_bio_stable_allclusters.csv"),
+  row.names = FALSE
+)
+
+# -------------------------------------------------------------------------
+# Save variable lists for reproducibility
+# -------------------------------------------------------------------------
+saveRDS(
+  stable_biomarkers_all,
+  file.path(final_data_dir, "stable_biomarkers_allclusters.rds")
+)
+
+write.csv(
+  data.frame(variable = stable_biomarkers_all),
+  file.path(final_data_dir, "stable_biomarkers_allclusters.csv"),
+  row.names = FALSE
+)
+
+saveRDS(
+  selected_ee_vars,
+  file.path(final_data_dir, "selected_ee_vars_used_for_clustering.rds")
+)
+
+write.csv(
+  data.frame(variable = selected_ee_vars),
+  file.path(final_data_dir, "selected_ee_vars_used_for_clustering.csv"),
+  row.names = FALSE
+)
+```
+

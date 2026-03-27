@@ -8,7 +8,7 @@ library(caret)
 library(doParallel)
 
 # Load data
-ukb <- readRDS("../pipeline_outputs/ukb_raw.rds")
+ukb <- readRDS("../pipeline_outputs/pre_output/ukb_raw.rds")
 
 # Ensure characters are factors
 ukb[] <- lapply(ukb, function(x) if (is.character(x)) as.factor(x) else x)
@@ -106,8 +106,11 @@ message("Remaining NA in train: ", sum(is.na(train_data[, pred_train])))
 message("Remaining NA in test: ", sum(is.na(test_data[, pred_test])))
 
 # Save completed train & test data
-saveRDS(train_data, "../pipeline_outputs/ukb_train.rds")
-saveRDS(test_data, "../pipeline_outputs/ukb_test.rds")
+output_dir <- "../pipeline_outputs/imputation_output"
+dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+
+saveRDS(train_data, file.path(output_dir, "ukb_train.rds"))
+saveRDS(test_data, file.path(output_dir, "ukb_test.rds"))
 
 # Script end
 end_time <- Sys.time()
