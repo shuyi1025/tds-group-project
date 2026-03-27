@@ -37,6 +37,7 @@ library(corrplot)
 library(ggplot2)
 library(GGally)
 library(data.table)
+library(broom)
 ```
 
 Load datasets
@@ -406,24 +407,35 @@ run_one <- function(var) {
   # exposure type
   is_fact <- is.factor(dat[[var]])
   
-  if (!is_fact) {
-    # numeric / 0-1: Wald p for var
-    sm <- summary(fit1)
-    if (!(var %in% rownames(sm$coefficients))) return(NULL)
-    beta <- sm$coefficients[var, "Estimate"]
-    pval <- sm$coefficients[var, "Pr(>|z|)"]
-    
-    return(data.frame(
-      variable = var,
-      domain = get_domain(var),
-      type = "numeric",
-      n_used = n_used,
-      beta = beta,
-      OR = exp(beta),
-      p = pval,
-      stringsAsFactors = FALSE
-    ))
+if (!is_fact) {
+  # standardise continuous exposure if not binary
+  if (length(unique(dat[[var]])) > 2) {
+    dat[[var]] <- as.numeric(scale(dat[[var]]))
+    type_now <- "numeric_sd"
   } else {
+    type_now <- "numeric_binary"
+  }
+  
+  fit1 <- try(glm(full_fml, data = dat, family = binomial()), silent = TRUE)
+  if (inherits(fit1, "try-error")) return(NULL)
+  
+  sm <- summary(fit1)
+  if (!(var %in% rownames(sm$coefficients))) return(NULL)
+  
+  beta <- sm$coefficients[var, "Estimate"]
+  pval <- sm$coefficients[var, "Pr(>|z|)"]
+  
+  return(data.frame(
+    variable = var,
+    domain = get_domain(var),
+    type = type_now,
+    n_used = n_used,
+    beta = beta,
+    OR = exp(beta),
+    p = pval,
+    stringsAsFactors = FALSE
+  ))
+} else {
     # factor: GLOBAL LRT p
     lr <- anova(fit0, fit1, test = "LRT")
     pval <- lr$`Pr(>Chi)`[2]
@@ -450,8 +462,9 @@ res <- res %>%
     neglog10p = -log10(p)
   )
 
+write.csv(res, file.path(output_dir, "manhattan_results.csv"), row.names = FALSE)
 
-# 4) Plot Manhattan
+# 4a) Plot Manhattan
 
 domain_order <- c(
   "Diet/Alcohol",
@@ -492,6 +505,106 @@ p_manhattan <- ggplot(res2, aes(x = pos, y = neglog10p, color = domain)) +
 
 print(p_manhattan)
 ggsave(file.path(output_dir, "manhattan_train_by_domain.png"), p_manhattan, width = 12, height = 5, dpi = 300)
+
+## 4b) Top signals effect size table
+
+# choose top variables from Manhattan results
+top_vars <- res %>%
+  arrange(p) %>%
+  slice_head(n = 10) %>%
+  pull(variable)
+
+get_or_ci_table <- function(var) {
+  dat <- ukb_train[, c(outcome, covars, var), drop = FALSE]
+  dat <- tidyr::drop_na(dat)
+  
+  if (nrow(dat) < 200) return(NULL)
+  if (length(unique(dat[[var]])) < 2) return(NULL)
+  
+  # character -> factor
+  if (is.character(dat[[var]])) dat[[var]] <- as.factor(dat[[var]])
+  
+  # numeric: standardise to per SD increase
+  if (is.numeric(dat[[var]]) && length(unique(dat[[var]])) > 2) {
+    dat[[var]] <- as.numeric(scale(dat[[var]]))
+    
+    fit <- try(glm(
+      as.formula(paste0(outcome, " ~ ", var, " + ", paste(covars, collapse = " + "))),
+      data = dat,
+      family = binomial()
+    ), silent = TRUE)
+    
+    if (inherits(fit, "try-error")) return(NULL)
+    
+    sm <- summary(fit)$coefficients
+    if (!(var %in% rownames(sm))) return(NULL)
+    
+    ci <- suppressMessages(confint.default(fit))
+    
+    data.frame(
+      Variable = var,
+      Level = "Per SD increase",
+      OR = exp(sm[var, "Estimate"]),
+      CI_low = exp(ci[var, 1]),
+      CI_high = exp(ci[var, 2]),
+      P_value = sm[var, "Pr(>|z|)"],
+      stringsAsFactors = FALSE
+    )
+    
+  } else if (is.factor(dat[[var]]) || is.logical(dat[[var]]) || (is.numeric(dat[[var]]) && length(unique(dat[[var]])) == 2)) {
+    
+    # if binary numeric, convert to factor for clearer output
+    if (is.numeric(dat[[var]]) && length(unique(dat[[var]])) == 2) {
+      dat[[var]] <- as.factor(dat[[var]])
+    }
+    
+    fit <- try(glm(
+      as.formula(paste0(outcome, " ~ ", var, " + ", paste(covars, collapse = " + "))),
+      data = dat,
+      family = binomial()
+    ), silent = TRUE)
+    
+    if (inherits(fit, "try-error")) return(NULL)
+    
+    tidy_fit <- broom::tidy(fit, conf.int = TRUE, exponentiate = TRUE)
+    
+    # keep only exposure rows, not covariates / intercept
+    out <- tidy_fit %>%
+      dplyr::filter(grepl(paste0("^", var), term)) %>%
+      dplyr::mutate(
+        Variable = var,
+        Level = sub(paste0("^", var), "", term),
+        Level = ifelse(Level == "", "Per unit increase", Level),
+        OR = estimate,
+        CI_low = conf.low,
+        CI_high = conf.high,
+        P_value = p.value
+      ) %>%
+      dplyr::select(Variable, Level, OR, CI_low, CI_high, P_value)
+    
+    if (nrow(out) == 0) return(NULL)
+    out
+    
+  } else {
+    return(NULL)
+  }
+}
+
+effect_table <- lapply(top_vars, get_or_ci_table) %>%
+  bind_rows() %>%
+  mutate(
+    `OR (95% CI)` = sprintf("%.2f (%.2f–%.2f)", OR, CI_low, CI_high),
+    P_value = sprintf("%.4f", P_value)
+  ) %>%
+  dplyr::select(Variable, Level, `OR (95% CI)`, P_value)
+
+print(effect_table, row.names = FALSE)
+
+write.csv(
+  effect_table,
+  file.path(output_dir, "top10_effect_size_table.csv"),
+  row.names = FALSE
+)
 
 ```
 
