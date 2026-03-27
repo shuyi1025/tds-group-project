@@ -250,7 +250,6 @@ ukb_test  <- clean_employment_data(ukb_test)
 skip_indicators <- function(df){
   df %>%
     dplyr::select(-any_of(c(
-      "employed",
       "smoke_past_indicator",
       "smoke_current_indicator",
       "ses_age_completed_full_time_education.0.0"
@@ -354,8 +353,7 @@ ukb_train[[outcome]] <- as.integer(ukb_train[[outcome]])
 
 # Define exposome exposures
 drop_cols <- c(
-  "eid","cvd_date","date_death.0.0","date_lost_to_fup.0.0","date_recr.0.0",
-  "dob.0.0","mob","yob","assessment_centre_location.0.0",
+  "eid","date_lost_to_fup.0.0","date_recr.0.0","assessment_centre_location.0.0",
   outcome, covars
 )
 
@@ -377,7 +375,7 @@ get_domain <- function(v){
   if (grepl("^env_", v)) return("Environment")
   if (grepl("^mh_", v)) return("Mental health")
   if (grepl("^phys_|^sed_", v)) return("Physical activity")
-  if (grepl("^ses_|^emp_|^imd$|^qualification|^employed$", v)) return("Socioeconomic")
+  if (grepl("^ses_|^emp_|^imd$|^qualification", v)) return("Socioeconomic")
   if (grepl("^sleep_", v)) return("Sleep")
   if (grepl("^smoke_", v)) return("Smoking")
   "Other"
@@ -1299,7 +1297,7 @@ test_v1  <- process_employment(test_v1)
 ```{r}
 reorder_cols <- function(df){
 
-  first_cols <- c("eid", "cvd_event", "cvd_date")
+  first_cols <- c("eid", "cvd_event")
 
   other_cols <- setdiff(names(df), first_cols)
 
@@ -1318,14 +1316,13 @@ test_v1  <- reorder_cols(test_v1)
 outcome <- "cvd_event"
 covars  <- c("age_recr.0.0", "sex.0.0", "ethnicity.0.0",'bmi','sbp_avg','dbp_avg')
 drop_cols <- c(
-  "eid","cvd_date","date_death.0.0","date_lost_to_fup.0.0","date_recr.0.0",
-  "dob.0.0","mob","yob","assessment_centre_location.0.0",
+  "eid","date_lost_to_fup.0.0","date_recr.0.0","assessment_centre_location.0.0",
   outcome, covars
 )
 
 exposome_prefix <- c("^diet_", "^emp_", "^env_", "^mh_", "^phys_", "^sed_", "^ses_", "^sleep_", "^smoke_")
 exposome_single <- c(
-  "qualification.0.5","alcohol_category","employed"
+  "qualification.0.5","alcohol_category"
 )
 
 exposures <- names(train_v1)[
