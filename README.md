@@ -86,12 +86,21 @@ nano pipeline_scripts/Aim2_3.Rmd
 This folder contains four machine learning models used in Aim 4:
 
 logistic.ipynb — Logistic Regression
-
+``` bash
+nano pipeline_scripts/Aim4/logistic.ipynb
+```
 random_forest.ipynb — Random Forest
-
+``` bash
+nano pipeline_scripts/Aim4/random_forest.ipynb
+```
 XGboost.ipynb — XGBoost
-
+``` bash
+nano pipeline_scripts/Aim4/XGboost.ipynb
+```
 NN.ipynb — Neural Network
+``` bash
+nano pipeline_scripts/Aim4/NN.ipynb
+```
 
 Each notebook is designed to run on three alternative training datasets.
 To switch between datasets, modify the data path at the beginning of the notebook.
