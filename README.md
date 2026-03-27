@@ -82,12 +82,15 @@ nano pipeline_scripts/Aim1.Rmd
 ``` bash
 nano pipeline_scripts/Aim2_3.Rmd
 ```
-### 7. Aim 4
+### 7.📁 Aim 4
 This folder contains four machine learning models used in Aim 4:
 
 logistic.ipynb — Logistic Regression
+
 random_forest.ipynb — Random Forest
+
 XGboost.ipynb — XGBoost
+
 NN.ipynb — Neural Network
 
 Each notebook is designed to run on three alternative training datasets.
