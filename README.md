@@ -10,8 +10,9 @@ This repository contains the data processing and modelling pipeline for analysin
 
 ```         
 TDS_Group8/
-├── extraction_and_recoding/    # extraction + recoding workflow
-├── pipeline_scripts/           # main preprocessing / imputation / downstream / Aims scripts
+├── extraction_and_recoding/    # extraction and recoding workflow
+├── pipeline_jobs/              # HPC job scripts
+├── pipeline_scripts/           # main preprocessing, imputation, downstream, and Aim scripts
     ├── preprocessing
     ├── imputation
     ├── post_imputation
@@ -21,11 +22,13 @@ TDS_Group8/
 ├── pipeline_outputs/           # generated outputs
 ```
 
-## 🚀 How to Run
+## How to Run
 
-### 0. Before beginning, please cd to the working directory.
+### 0. Before beginning, please cd to the project directory.
 
-### 1. Extraction & Recoding (HPC jobs)
+This project uses relative paths throughout, so once you are in the project root directory, the remaining commands should run directly.
+
+### 1. Extraction & Recoding
 
 Submit the extraction and recoding job scripts:
 
@@ -37,80 +40,95 @@ qsub extraction_and_recoding/3-recode_extracted.sh
 
 ### 2. Preprocessing
 
-#### Option A: Render the full R Markdown report
-
-This will run the full workflow and generate the report output.
+#### Render the full R Markdown report
 
 ``` bash
-Rscript -e "rmarkdown::render('pipeline_scripts/final_preprocessing.Rmd', output_format = 'html_document')"
+qsub pipeline_jobs/preprocessing.sh
 ```
 
-#### Option B: Open the file for inspection and run code chunks (Recommended)
+The rendered HTML report will be generated at: pipeline_scripts/final_preprocessing.html
 
-``` bash
-nano pipeline_scripts/final_preprocessing.Rmd
-```
-
-### 3. Imputation (HPC job)
+### 3. Imputation
 
 Submit the imputation job script:
 
 ``` bash
-qsub pipeline_scripts/imputation.sh
+qsub pipeline_jobs/imputation.sh
 ```
 
 ### 4. Downstream
 
-``` bash
-Rscript -e "rmarkdown::render('pipeline_scripts/post_imputation_script.Rmd', output_format = 'html_document')"
-```
-
-#### Option B: Open the file for inspection and run code chunks (Recommended)
+#### Render the full R Markdown report
 
 ``` bash
-nano pipeline_scripts/post_imputation_script.Rmd
+qsub pipeline_jobs/post_imputation.sh
 ```
+
+The rendered HTML report will be generated at: pipeline_scripts/post_imputation.html
 
 ### 5. Aim 1
 
+#### Render the full R Markdown report
+
 ``` bash
-nano pipeline_scripts/Aim1.Rmd
+qsub pipeline_jobs/aim1.sh
 ```
+
+The rendered HTML report will be generated at: pipeline_scripts/Aim1.html
 
 ### 6. Aim 2&3
 
-``` bash
-nano pipeline_scripts/Aim2_3.Rmd
-```
-### 7.📁 Aim 4
-This folder contains four machine learning models used in Aim 4:
+#### Render the full R Markdown report
 
-logistic.ipynb — Logistic Regression
 ``` bash
-nano pipeline_scripts/Aim4/logistic.ipynb
-```
-random_forest.ipynb — Random Forest
-``` bash
-nano pipeline_scripts/Aim4/random_forest.ipynb
-```
-XGboost.ipynb — XGBoost
-``` bash
-nano pipeline_scripts/Aim4/XGboost.ipynb
-```
-NN.ipynb — Neural Network
-``` bash
-nano pipeline_scripts/Aim4/NN.ipynb
+qsub pipeline_jobs/aim2_3.sh
 ```
 
-Each notebook is designed to run on three alternative training datasets.
-To switch between datasets, modify the data path at the beginning of the notebook.
+Elbow and siluette results will need to be used to change number of clusters to be used. Please notify once this is run. The rendered HTML report will be generated at: pipeline_scripts/Aim2_3.html
 
-Available Datasets
+### 7. Aim 4
 
-The following datasets can be used for Aim 4:
-1. Baseline variables only: "../pipeline_outputs/aim1_output/ukb_train_baseline.csv"
-2. Baseline + external exposome one-hot encoded variables: "../pipeline_outputs/aim1_output/train_baseline_ee_onehot.csv"
-3. Baseline + selected external exposome/biomarker features after stability selection and clustering: "../pipeline_outputs/aim2_3_output/train_ee_bio_stable_allclusters.csv"
+The folder contains Python scripts for four machine learning models:
+
+-   Logistic Regression
+
+-   Random Forest
+
+-   XGBoost
+
+-   Neural Network
+
+For each model, scripts are provided for three alternative training datasets:
+
+-   baseline
+
+-   ee
+
+-   biomarker
+
+``` bash
+qsub pipeline_jobs/logistic_baseline.sh
+qsub pipeline_jobs/logistic_ee.sh
+qsub pipeline_jobs/logistic_biomarker.sh
+```
+
+``` bash
+qsub pipeline_jobs/rf_baseline.sh
+qsub pipeline_jobs/rf_ee.sh
+qsub pipeline_jobs/rf_biomarker.sh
+```
+
+``` bash
+qsub pipeline_jobs/xgboost_baseline.sh
+qsub pipeline_jobs/xgboost_ee.sh
+qsub pipeline_jobs/xgboost_biomarker.sh
+```
+
+``` bash
+qsub pipeline_jobs/nn_baseline.sh
+qsub pipeline_jobs/nn_ee.sh
+qsub pipeline_jobs/nn_biomarker.sh
+```
 
 ## Dependencies
 

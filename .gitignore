@@ -68,6 +68,7 @@ preprocessing/
 table 1/
 Partial_mixed_corr_v2.R
 pipeline_outputs/
+pipeline_scripts/*.html
 *.png
 *.csv
 *.R
