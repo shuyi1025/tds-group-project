@@ -2,7 +2,8 @@
 #PBS -l select=1:ncpus=1:mem=80gb
 #PBS -N extraction
 
-cd /rds/general/project/hda_25-26/live/TDS/TDS_Group8/extraction_and_recoding/scripts
+cd "$PBS_O_WORKDIR/extraction_and_recoding/scripts"
+#cd /rds/general/project/hda_25-26/live/TDS/TDS_Group8/extraction_and_recoding/scripts
 
 eval "$(~/miniforge3/bin/conda shell.bash hook)"
 conda activate r413

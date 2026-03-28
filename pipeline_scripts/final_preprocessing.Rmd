@@ -32,6 +32,9 @@ Load all necessary libraries
 library(dplyr)
 library(lubridate)
 library(stringr)
+library(ggplot2)
+library(stringr)
+library(tidyr)
 ```
 
 Load data
@@ -351,12 +354,6 @@ ukb_v2 <- ukb_v2 %>%
   ) %>%
   dplyr::select(-dbp_automated.0.0, -dbp_automated.0.1)
 
-# drop data
-ukb_v2 <- ukb_v2 %>%
-  dplyr::select(
-    -sleep_snore.1.0, -sleep_snore.2.0, -sleep_snore.3.0,
-    -sleep_chronotype.1.0, -sleep_chronotype.2.0, -sleep_chronotype.3.0
-  )
 ```
 
 
@@ -541,6 +538,122 @@ summary(row_missing_rate)
 hist(row_missing_rate, breaks = 50)
 
 ```
+## 10.5)
+plotting missingness of variables by domain level
+```{r}
+# ------------------------------------------------------------
+# 1. Get variable names
+# ------------------------------------------------------------
+var_names <- names(ukb_v2)
+
+# ------------------------------------------------------------
+# 2. Assign each variable to a domain based on its prefix/name
+# ------------------------------------------------------------
+# Notes:
+# - startsWith() is used for prefixes
+# - exact variable names are matched with %in%
+# - variables that do not match any rule are left as NA
+
+domain_map <- tibble(variable = var_names) %>%
+  mutate(
+    domain = case_when(
+      # Biological
+      startsWith(variable, "biochem_") | startsWith(variable, "blood_") ~ "Biological",
+      
+      # Lifestyle
+      startsWith(variable, "alc_") |
+        startsWith(variable, "diet_") |
+        startsWith(variable, "phys_") |
+        startsWith(variable, "sleep_") |
+        startsWith(variable, "smoke_") |
+        startsWith(variable, "sed_") ~ "Lifestyle",
+      
+      # Physiological
+      variable %in% c("dob", "yob", "date_recr", "fvc", "fev1", "mob",
+                      "assessment_centre", "date_lost_to_fup") |
+        startsWith(variable, "impedence_") |
+        startsWith(variable, "his_") ~ "Physiological",
+      
+      # Environmental
+      startsWith(variable, "env_") |
+        startsWith(variable, "domestic_") |
+        startsWith(variable, "smoke_maternal_") ~ "Environmental",
+      
+      # Socioeconomic
+      startsWith(variable, "employment_") |
+        startsWith(variable, "ses_") |
+        startsWith(variable, "qualification") ~ "Socioeconomic",
+      
+      # Psychosocial
+      startsWith(variable, "mh_") ~ "Psychosocial",
+      
+      # Baseline
+      variable %in% c("ethnicity", "age_recr") |
+        startsWith(variable, "sbp_") |
+        startsWith(variable, "dbp_") |
+        startsWith(variable, "sex_") |
+        startsWith(variable, "bmi_") ~ "Baseline",
+      
+      TRUE ~ NA_character_
+    )
+  )
+
+# Optional: inspect variables that were not assigned to any domain
+unassigned_vars <- domain_map %>%
+  filter(is.na(domain))
+
+print(unassigned_vars)
+
+# ------------------------------------------------------------
+# 3. Calculate % missing for each variable
+# ------------------------------------------------------------
+var_missing <- tibble(
+  variable = names(ukb_v2),
+  pct_missing = sapply(ukb_v2, function(x) mean(is.na(x)) * 100)
+)
+
+# ------------------------------------------------------------
+# 4. Merge domain assignment with missingness values
+# ------------------------------------------------------------
+domain_missing <- domain_map %>%
+  left_join(var_missing, by = "variable") %>%
+  filter(!is.na(domain))
+
+# ------------------------------------------------------------
+# 5. Calculate mean % missing within each domain
+# ------------------------------------------------------------
+mean_domain_missing <- domain_missing %>%
+  group_by(domain) %>%
+  summarise(mean_pct_missing = mean(pct_missing, na.rm = TRUE),
+            n_variables = n(),
+            .groups = "drop")
+
+print(mean_domain_missing)
+
+# ------------------------------------------------------------
+# 6. Order domains from highest to lowest missingness
+# ------------------------------------------------------------
+mean_domain_missing <- mean_domain_missing %>%
+  arrange(desc(mean_pct_missing)) %>%
+  mutate(domain = factor(domain, levels = domain))
+
+# ------------------------------------------------------------
+# 7. Plot
+# ------------------------------------------------------------
+ggplot(mean_domain_missing, aes(x = mean_pct_missing, y = domain)) +
+  geom_col(fill = "#1f3b73", colour = "grey30") +
+  labs(
+    title = "Mean missingness by Domain",
+    x = "Mean % Missing",
+    y = NULL
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid.major.y = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+```
+
 
 ## 11) Excluding vars
 
@@ -550,9 +663,8 @@ Vars have been excluded based on their level of missingness in the UK Biobank. V
 
 ukb_v2 <- ukb_v2%>%
   dplyr::select( -starts_with("smoke_age"), 
-         -starts_with("smoke_tobacco_type_"), -diet_carb.0.0, -diet_energy.0.0, -diet_fat.0.0,
-         -diet_food_weight.0.0, -diet_polyunsat_fat.0.0, -diet_protein.0.0, -diet_sat_fat.0.0,
-         -diet_total_sugar.0.0, -sleep_wake_early.0.0, -sleep_too_much.0.0, 
+         -starts_with("smoke_tobacco_type_"), -diet_carb.0.0,
+         -sleep_wake_early.0.0, -sleep_too_much.0.0, 
          -sleep_falling_asleep_trouble.0.0, -sleep_change.0.0, -sleep_daytime_nap.0.0, 
          -smoke_people_in_household.0.0, -smoke_tobacco_exposure_home.0.0,  
          -smoke_tobacco_exposure_outside.0.0)

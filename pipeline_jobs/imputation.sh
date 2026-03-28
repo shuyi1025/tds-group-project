@@ -3,7 +3,8 @@
 #PBS -l select=1:ncpus=128:ompthreads=128:mem=200gb
 #PBS -N imputation
 
-cd pipeline_scripts
+cd "$PBS_O_WORKDIR/pipeline_scripts"
+#cd /rds/general/project/hda_25-26/live/TDS/TDS_Group8/pipeline_scripts
 
 eval "$(~/miniforge3/bin/conda shell.bash hook)"
 conda activate r413
