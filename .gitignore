@@ -57,7 +57,7 @@ extraction_and_recoding/README.txt
 extraction_and_recoding/scripts/3-recode_fixed.R
 extraction_and_recoding/scripts/03-recode_extracted.R
 
-# scripts & outpus
+# scripts & outputs
 correlation_analysis_ah/
 Data/
 final_recode/
@@ -66,7 +66,7 @@ modelling/
 post_imputation/
 preprocessing/
 table 1/
-Partial_mixed_corr_v2.R
+Uni_regr_biom~ee/
 pipeline_outputs/
 pipeline_scripts/*.html
 *.png
