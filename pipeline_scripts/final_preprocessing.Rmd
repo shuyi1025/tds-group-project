@@ -287,7 +287,6 @@ ukb_v2$ethnicity.0.0  <- as.factor(ukb_v2$ethnicity.0.0)
 
 ## 5) Outlier removal
 
-*For ukbiobank edit this so all values "\< 0" becomes NA*
 
 ```{r, outliers}
 
@@ -430,7 +429,7 @@ ukb_v2 <- process_imd(ukb_v2)
 ## 9) Alcohol and BMI cats
 
 ```{r, cats}
-process_alcohol_bmi <- function(df) {
+process_alcohol <- function(df) {
   
   df %>%
     dplyr::mutate(
@@ -458,28 +457,12 @@ process_alcohol_bmi <- function(df) {
                               "Daily or almost daily") ~ "Daily drinker",
         
         TRUE ~ NA_character_
-      ),
-      
-      # bmi cats
-      bmi = cut(
-        bmi.0.0,
-        breaks = c(-Inf, 18.5, 25, 30, 40, Inf),
-        labels = c(
-          "Underweight (<18.5)",
-          "Normal weight (18.5–24.9)",
-          "Overweight (25–29.9)",
-          "Obese (30–39.9)",
-          "Severely obese (≥40)"
-        ),
-        right = FALSE
       )
-    ) %>%
-    
-# drop original cols
-  dplyr::select(-bmi.0.0)
+    )
 }  
 
-ukb_v2 <- process_alcohol_bmi(ukb_v2)
+
+ukb_v2 <- process_alcohol(ukb_v2)
 ```
 
 
@@ -538,17 +521,21 @@ summary(row_missing_rate)
 hist(row_missing_rate, breaks = 50)
 
 ```
+
 ## 10.5)
 plotting missingness of variables by domain level
+
+*need to update so it matches variables found in our current dataset - currently matches old vars*
+
+
 ```{r}
-# ------------------------------------------------------------
+
 # 1. Get variable names
-# ------------------------------------------------------------
 var_names <- names(ukb_v2)
 
-# ------------------------------------------------------------
+
 # 2. Assign each variable to a domain based on its prefix/name
-# ------------------------------------------------------------
+
 # Notes:
 # - startsWith() is used for prefixes
 # - exact variable names are matched with %in%
@@ -569,7 +556,7 @@ domain_map <- tibble(variable = var_names) %>%
         startsWith(variable, "sed_") ~ "Lifestyle",
       
       # Physiological
-      variable %in% c("dob", "yob", "date_recr", "fvc", "fev1", "mob",
+      variable %in% c("date_recr", "fvc", "fev1", "mob",
                       "assessment_centre", "date_lost_to_fup") |
         startsWith(variable, "impedence_") |
         startsWith(variable, "his_") ~ "Physiological",

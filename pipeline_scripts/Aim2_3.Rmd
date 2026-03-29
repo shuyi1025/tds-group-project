@@ -7,8 +7,6 @@ date: "2026-03-26"
 ## 0) Setup
 
 ```{r setup, message=FALSE, warning=FALSE}
-rm(list = ls())
-
 library(dplyr)
 library(ggplot2)
 library(uwot)
