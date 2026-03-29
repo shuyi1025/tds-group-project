@@ -7,6 +7,6 @@ cd "$PBS_O_WORKDIR/pipeline_scripts"
 #cd /rds/general/project/hda_25-26/live/TDS/TDS_Group8/pipeline_scripts
 
 eval "$(~/miniforge3/bin/conda shell.bash hook)"
-conda activate r413
+conda activate g8-r44
 
 Rscript imputation.R

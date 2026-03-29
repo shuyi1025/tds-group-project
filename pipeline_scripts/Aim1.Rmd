@@ -24,6 +24,7 @@ library(glmnet)
 library(pROC)
 library(ggplot2)
 library(sharp)
+library(data.table)
 
 ukb_train <- readRDS("../pipeline_outputs/post_imputation_output/train_final.rds")
 ukb_test  <- readRDS("../pipeline_outputs/post_imputation_output/test_final.rds")
@@ -71,7 +72,7 @@ preds <- unique(c(baseline_covars, external_vars))
 preds <- setdiff(preds, c(outcome, drop_cols))
 ```
 
-## 2) Prepare training and test datasets
+#### 1.1) Prepare training and test datasets
 
 ```{r}
 train_df <- ukb_train %>% dplyr::select(dplyr::all_of(c(outcome, preds)))
@@ -137,7 +138,7 @@ for (v in baseline_covars) {
 table(penalty_factor)
 ```
 
-# 2) Fit cross-validated LASSO logistic regression
+## 2) Fit cross-validated LASSO logistic regression
 
 ```{r}
 set.seed(123)
@@ -328,7 +329,7 @@ write.csv(
 
 write.csv(
   ukb_test_baseline,
-  "../pipeline_outputs/aim1_output/ukb_train_baseline.csv",
+  "../pipeline_outputs/aim1_output/ukb_test_baseline.csv",
   row.names = FALSE
 )
 

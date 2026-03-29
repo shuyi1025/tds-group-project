@@ -1,0 +1,24 @@
+name: g8-r413
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - r-base=4.1.3
+  - r-png
+  - numpy
+  - pandas
+  - scikit-learn
+  - matplotlib
+  - pytorch
+  - r-tidyverse
+  - r-lme4
+  - r-data.table
+  - r-openxlsx
+  - r-caret
+  - r-doparallel
+  - r-glmnet
+  - r-proc
+  - r-uwot
+  - r-rmarkdown
+  - r-knitr
+  - r-corrplot

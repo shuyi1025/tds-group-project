@@ -11,6 +11,7 @@ This repository contains the data processing and modelling pipeline for analysin
 ```         
 TDS_Group8/
 ├── extraction_and_recoding/    # extraction and recoding workflow
+├── pipeline_envs/              # env files
 ├── pipeline_jobs/              # HPC job scripts
 ├── pipeline_scripts/           # main preprocessing, imputation, downstream, and Aim scripts
     ├── preprocessing
@@ -24,9 +25,47 @@ TDS_Group8/
 
 ## How to Run
 
-### 0. Before beginning, please cd to the project directory.
+### 0. Load environments
+
+#### Before beginning, please cd to the project directory.
 
 This project uses relative paths throughout, so once you are in the project root directory, the remaining commands should run directly.
+
+#### Create environments
+
+``` bash
+conda env create -f pipeline_envs/r413.yml
+conda env create -f pipeline_envs/r44.yml
+```
+
+#### Install some packages manually
+
+r4.1.3
+
+``` bash
+eval "$(~/miniforge3/bin/conda shell.bash hook)"
+conda activate g8-r413
+R -e "install.packages('sharp', repos='https://cloud.r-project.org')"
+```
+
+``` bash
+q()
+conda deactivate
+```
+
+r4.4
+
+``` bash
+eval "$(~/miniforge3/bin/conda shell.bash hook)"
+conda activate g8-r44
+R -e "install.packages('DescTools', repos='https://cran.rstudio.com')"
+R -e "install.packages("miceRanger", repos = "https://cran.rstudio.com")"
+```
+
+``` bash
+q()
+conda deactivate
+```
 
 ### 1. Extraction & Recoding
 

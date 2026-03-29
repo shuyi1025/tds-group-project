@@ -1,0 +1,23 @@
+name: g8-r44
+channels:
+  - conda-forge
+  - bioconda
+
+dependencies:
+  - r-base=4.4
+  - r-dplyr
+  - r-caret
+  - r-doparallel
+  - r-lme4
+  - r-haven
+  - r-fs
+  - r-nloptr
+  - r-pbkrtest
+  - r-car
+  - r-rstatix
+  - r-ggpubr
+  - cmake
+  - pkg-config
+  - make
+  - zlib
+  - libzlib
