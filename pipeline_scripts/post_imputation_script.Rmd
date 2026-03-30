@@ -168,7 +168,7 @@ for(v in env_pct_vars){
 
 ## 2) Skip logic
 
-Ensure skip logic and structural NAs are being respected after imputation - will also one hot encode all categorical skip vars
+Ensure skip logic and structural NAs are being respected after imputation 
 
 ### Smoke skip logic
 
@@ -421,7 +421,7 @@ association_matrix <- function(df){
 
 domain_list <- list(
   lifestyle = ukb_train %>% dplyr::select(matches("^(alc|diet|phys|sed|smoke|sleep)")),
-  socioeconomic = ukb_train %>% dplyr::select(matches("^(ses|emp)"), qualification.0.5, imd, ethnicity.0.0),
+  socioeconomic = ukb_train %>% dplyr::select(matches("^(ses|emp)"), qualification.0.5),
   psychosocial = ukb_train %>% dplyr::select(matches("^mh")),
   environmental = ukb_train %>% dplyr::select(matches("^env"))
 )
@@ -495,7 +495,7 @@ for(thresh in thresholds){
 
 # Subset data for variables of interest
 plot_df <- ukb_train %>%
-  dplyr::select(age_recr.0.0, bmi.0.0, sbp_avg, dbp_avg, sex.0.0) %>%  # adjust variable names if needed
+  dplyr::select(age_recr.0.0, bmi.0.0, sbp_avg, dbp_avg, sex.0.0) %>%  
   dplyr::filter(!is.na(age_recr.0.0) & !is.na(bmi.0.0) & !is.na(sbp_avg) & !is.na(dbp_avg) & !is.na(sex.0.0))
 
 # Ensure Sex is factor
@@ -521,7 +521,7 @@ pair_plot <- ggpairs(
 
 
 # Save to file
-ggsave(output_dir, pair_plot, width = 10, height = 10, dpi = 300)
+ggsave(file.path(output_dir, "pair_plot.png"), pair_plot, width = 10, height = 10, dpi = 300)
 
 # Display plot
 pair_plot
@@ -1241,14 +1241,13 @@ df <- train_v1
 # ---- specify variables ----
 cont_vars <- c(
   "age_recr.0.0", "sbp_avg", "dbp_avg", "mh_neuroticism_score.0.0",
-  "phys_MET_total", "diet_risk_score", "mh_symptom_score"
+  "phys_MET_total", "diet_risk_score", "mh_symptom_score", "bmi.0.0"
 )
 
 cat_vars <- c(
   "sex.0.0",
   "ethnicity.0.0",
   "cvd_event",
-  "bmi.0.0",
   "smoke_status.0.0",
   "alcohol_category",
   "ses_current_employment_status.0.6",

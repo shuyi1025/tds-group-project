@@ -654,18 +654,12 @@ domain_map <- tibble(variable = var_names) %>%
       startsWith(variable, "biochem_") | startsWith(variable, "blood_") ~ "Biological",
       
       # Lifestyle
-      startsWith(variable, "alc_") |
+      startsWith(variable, "alc") |
         startsWith(variable, "diet_") |
         startsWith(variable, "phys_") |
         startsWith(variable, "sleep_") |
         startsWith(variable, "smoke_") |
         startsWith(variable, "sed_") ~ "Lifestyle",
-
-      # Physiological
-      variable %in% c("date_recr", "fvc", "fev1", "mob",
-                      "assessment_centre", "date_lost_to_fup") |
-        startsWith(variable, "impedence_") |
-        startsWith(variable, "his_") ~ "Physiological",
 
       # Environmental
       startsWith(variable, "env_") ~ "Environmental",
@@ -681,7 +675,7 @@ domain_map <- tibble(variable = var_names) %>%
       variable %in% c("ethnicity.0.0", "age_recr.0.0", "sex.0.0") |
         startsWith(variable, "sbp_") |
         startsWith(variable, "dbp_") |
-        startsWith(variable, "bmi.0.0") ~ "Baseline",
+        startsWith(variable, "bmi") ~ "Baseline",
       
       TRUE ~ NA_character_
     )
@@ -799,12 +793,11 @@ cat_table <- function(x, varname, digits = 1, include_na = FALSE) {
 }
 
 # ---- specify variables ----
-cont_vars <- c("age_recr.0.0", "sbp_avg", "dbp_avg", "mh_neuroticism_score.0.0")
+cont_vars <- c("age_recr.0.0", "sbp_avg", "dbp_avg", "mh_neuroticism_score.0.0", "bmi.0.0")
 
 cat_vars <- c("sex.0.0",
               "ethnicity.0.0",
               "cvd_event",
-              "bmi.0.0",
               "smoke_status.0.0",
               "alc_status.0.0",
               "alcohol_category",
@@ -872,7 +865,7 @@ ukb_table1 <- ukb_v2 %>%
     `Neuroticism score` = mh_neuroticism_score.0.0,
     `Sex` = sex.0.0,
     `Ethnicity` = ethnicity.0.0,
-    `BMI category` = bmi.0.0,
+    `BMI` = bmi.0.0,
     `Smoking status` = smoke_status.0.0,
     `Alcohol drinking status` = alc_status.0.0,
     `Alcohol category` = alcohol_category,
@@ -894,13 +887,13 @@ cont_vars <- c(
   "Age at recruitment, years",
   "Systolic blood pressure, mmHg",
   "Diastolic blood pressure, mmHg",
-  "Neuroticism score"
+  "Neuroticism score",
+  "BMI"
 )
 
 cat_vars <- c(
   "Sex",
   "Ethnicity",
-  "BMI",
   "Smoking status",
   "Alcohol drinking status",
   "Alcohol category",
