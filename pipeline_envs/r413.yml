@@ -22,3 +22,4 @@ dependencies:
   - r-rmarkdown
   - r-knitr
   - r-corrplot
+  - r-ggally

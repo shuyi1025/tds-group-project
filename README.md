@@ -29,13 +29,16 @@ TDS_Group8/
 
 #### Before beginning, please cd to the project directory.
 
-This project uses relative paths throughout, so once you are in the project root directory, the remaining commands should run directly.
+-   Before running the extraction step, make sure the UK Biobank `ukb_path` in `extraction_and_recoding/1-generate_data_dict.sh` matches your actual UKB file location.
+-   cvd_events.rds is currently expected to be in pipeline_scripts/. You may replace the file in that folder directly. If you store it elsewhere, make sure to update the corresponding path in pipeline_scripts/final_preprocessing.Rmd before running preprocessing.
+-   This project uses relative paths throughout, so once you are in the project root directory, the remaining commands should run directly.
 
 #### Create environments
 
 ``` bash
 conda env create -f pipeline_envs/r413.yml
 conda env create -f pipeline_envs/r44.yml
+conda env create -f pipeline_envs/torch_env.yml
 ```
 
 #### Install some packages manually
@@ -130,43 +133,38 @@ Elbow and siluette results will need to be used to change number of clusters to 
 The folder contains Python scripts for four machine learning models:
 
 -   Logistic Regression
-
 -   Random Forest
-
 -   XGBoost
-
 -   Neural Network
 
 For each model, scripts are provided for three alternative training datasets:
 
 -   baseline
-
 -   ee
-
 -   biomarker
 
 ``` bash
-qsub pipeline_jobs/logistic_baseline.sh
-qsub pipeline_jobs/logistic_ee.sh
-qsub pipeline_jobs/logistic_biomarker.sh
+qsub pipeline_jobs/log_base.sh
+qsub pipeline_jobs/log_ee.sh
+qsub pipeline_jobs/log_bio.sh
 ```
 
 ``` bash
-qsub pipeline_jobs/rf_baseline.sh
+qsub pipeline_jobs/rf_base.sh
 qsub pipeline_jobs/rf_ee.sh
-qsub pipeline_jobs/rf_biomarker.sh
+qsub pipeline_jobs/rf_bio.sh
 ```
 
 ``` bash
-qsub pipeline_jobs/xgboost_baseline.sh
+qsub pipeline_jobs/xgboost_base.sh
 qsub pipeline_jobs/xgboost_ee.sh
-qsub pipeline_jobs/xgboost_biomarker.sh
+qsub pipeline_jobs/xgboost_bio.sh
 ```
 
 ``` bash
-qsub pipeline_jobs/nn_baseline.sh
+qsub pipeline_jobs/nn_base.sh
 qsub pipeline_jobs/nn_ee.sh
-qsub pipeline_jobs/nn_biomarker.sh
+qsub pipeline_jobs/nn_bio.sh
 ```
 
 ## Dependencies

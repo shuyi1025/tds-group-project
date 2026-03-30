@@ -41,13 +41,11 @@ outcome <- "cvd_event"
 
 drop_cols <- c(
   "eid", 
-  "date_death.0.0", "date_lost_to_fup.0.0", "date_recr.0.0",
-  "assessment_centre_location.0.0"
-)
+  )
 
 drop_cols <- intersect(drop_cols, names(ukb_train))
 
-baseline_covars <- c("age_recr.0.0", "sex.0.0", "ethnicity.0.0",'bmi','sbp_avg','dbp_avg')
+baseline_covars <- c("age_recr.0.0", "sex.0.0", "ethnicity.0.0",'bmi.0.0','sbp_avg','dbp_avg')
 baseline_covars <- intersect(baseline_covars, names(ukb_train))
 
 # keep: external exposome
@@ -60,7 +58,6 @@ external_patterns <- c(
   "^ses_",
   "^mh_",
   "^emp_",
-  "^imd$",
   "^sleep_category$",
   "^alcohol_category$",
   "^qualification\\."
@@ -314,12 +311,12 @@ ggsave(
 ## 4) Make datasets with only baseline variables
 ```{r}
 keep_cols <- c("eid", "cvd_event", "age_recr.0.0", "sex.0.0", "ethnicity.0.0", 
-               "bmi", "sbp_avg", "dbp_avg")
+               "bmi.0.0", "sbp_avg", "dbp_avg")
 
 keep_cols <- intersect(keep_cols, names(ukb_train))
 
-ukb_train_baseline <- ukb_train[, keep_cols, drop = FALSE]
-ukb_test_baseline  <- ukb_test[, keep_cols, drop = FALSE]
+ukb_train_baseline <- ukb_train[, ..keep_cols]
+ukb_test_baseline  <- ukb_test[, ..keep_cols]
 
 write.csv(
   ukb_train_baseline,
@@ -338,18 +335,36 @@ write.csv(
 ## 5) Make onehot encoding dataset with selected variables
 
 ```{r}
-train_final_onehot <- model.matrix(~ . - 1, data = train_df) |> as.data.frame()
-test_final_onehot  <- model.matrix(~ . - 1, data = test_df)  |> as.data.frame()
+train_df <- as.data.frame(train_df, check.names = FALSE)
+test_df  <- as.data.frame(test_df,  check.names = FALSE)
+ukb_train <- as.data.frame(ukb_train, check.names = FALSE)
+ukb_test  <- as.data.frame(ukb_test,  check.names = FALSE)
 
-selected_vars <- stable_vars_df$variable
-train_baseline_ee_onehot <- train_final_onehot[, selected_vars, drop = FALSE]
-test_baseline_ee_onehot <- test_final_onehot[, selected_vars, drop = FALSE]
+x_cols <- setdiff(names(train_df), outcome)
+
+train_final_onehot <- model.matrix(
+  ~ . - 1,
+  data = train_df[, x_cols, drop = FALSE]
+) |> as.data.frame(check.names = FALSE)
+
+test_final_onehot <- model.matrix(
+  ~ . - 1,
+  data = test_df[, x_cols, drop = FALSE]
+) |> as.data.frame(check.names = FALSE)
 
 onehot_extra <- c(
-  grep("^bmi", names(test_final_onehot), value = TRUE),
-  grep("^sex", names(test_final_onehot), value = TRUE),
-  grep("^ethnicity", names(test_final_onehot), value = TRUE)
+  grep("^bmi", names(train_final_onehot), value = TRUE),
+  grep("^sex", names(train_final_onehot), value = TRUE),
+  grep("^ethnicity", names(train_final_onehot), value = TRUE)
 )
+
+selected_vars <- stable_vars_df$variable
+selected_vars <- setdiff(selected_vars, c(onehot_extra, "age_recr.0.0", "sbp_avg", "dbp_avg"))
+
+selected_vars <- intersect(selected_vars, names(train_final_onehot))
+
+train_baseline_ee_onehot <- train_final_onehot[, selected_vars, drop = FALSE]
+test_baseline_ee_onehot  <- test_final_onehot[, selected_vars, drop = FALSE]
 
 other_covars <- c(
   "eid",
@@ -359,30 +374,41 @@ other_covars <- c(
   "dbp_avg"
 )
 
+other_covars <- intersect(other_covars, names(ukb_train))
 
 train_baseline_ee_onehot <- cbind(
-  ukb_train[, ..other_covars],
-  train_final_onehot[, onehot_extra, drop = FALSE],
+  ukb_train[, other_covars, drop = FALSE],
+  train_final_onehot[, intersect(onehot_extra, names(train_final_onehot)), drop = FALSE],
   train_baseline_ee_onehot
 )
 
 test_baseline_ee_onehot <- cbind(
-  ukb_test[, ..other_covars],
-  test_final_onehot[, onehot_extra, drop = FALSE],
+  ukb_test[, other_covars, drop = FALSE],
+  test_final_onehot[, intersect(onehot_extra, names(test_final_onehot)), drop = FALSE],
   test_baseline_ee_onehot
 )
 
-train_baseline_ee_onehot <- dplyr::select(train_baseline_ee_onehot, -`sex.0.0Female`)
-test_baseline_ee_onehot  <- dplyr::select(test_baseline_ee_onehot, -`sex.0.0Female`)
+train_baseline_ee_onehot <- train_baseline_ee_onehot[, !duplicated(names(train_baseline_ee_onehot))]
+test_baseline_ee_onehot  <- test_baseline_ee_onehot[, !duplicated(names(test_baseline_ee_onehot))]
 
-write.csv(train_baseline_ee_onehot,
-          "../pipeline_outputs/aim1_output/train_baseline_ee_onehot.csv",
-          row.names = FALSE)
+if ("sex.0.0Female" %in% names(train_baseline_ee_onehot)) {
+  train_baseline_ee_onehot <- dplyr::select(train_baseline_ee_onehot, -`sex.0.0Female`)
+}
+if ("sex.0.0Female" %in% names(test_baseline_ee_onehot)) {
+  test_baseline_ee_onehot <- dplyr::select(test_baseline_ee_onehot, -`sex.0.0Female`)
+}
 
-write.csv(test_baseline_ee_onehot,
-          "../pipeline_outputs/aim1_output/test_baseline_ee_onehot.csv",
-          row.names = FALSE)
+write.csv(
+  train_baseline_ee_onehot,
+  "../pipeline_outputs/aim1_output/train_baseline_ee_onehot.csv",
+  row.names = FALSE
+)
 
+write.csv(
+  test_baseline_ee_onehot,
+  "../pipeline_outputs/aim1_output/test_baseline_ee_onehot.csv",
+  row.names = FALSE
+)
 ```
 
 ## 6) Make ee_biomarker datasets
@@ -422,8 +448,10 @@ bio_vars <- c(
   "biochem_triglycerides.0.0"
 )
 
-train_bio_df <- as.data.frame(ukb_train[, ..bio_vars])
-test_bio_df  <- as.data.frame(ukb_test[, ..bio_vars])
+bio_vars <- intersect(bio_vars, names(ukb_train))
+
+train_bio_df <- ukb_train[, bio_vars, drop = FALSE]
+test_bio_df  <- ukb_test[, bio_vars, drop = FALSE]
 
 train_ee_biomarker_onehot <- cbind(
   as.data.frame(train_baseline_ee_onehot),
