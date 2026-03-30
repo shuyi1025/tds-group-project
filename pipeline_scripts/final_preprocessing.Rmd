@@ -630,10 +630,8 @@ hist(column_missing_rate, breaks = 50, main = "Column-wise missingness", xlab = 
 hist(row_missing_rate, breaks = 50, main = "Row-wise missingness", xlab = "Missing rate")
 ```
 
-## 10.5)
-plotting missingness of variables by domain level
+#### Domain level missingness
 
-*need to update so it matches variables found in our current dataset - currently matches old vars*
 
 ```{r}
 
@@ -800,7 +798,7 @@ cat_vars <- c("sex.0.0",
               "cvd_event",
               "smoke_status.0.0",
               "alc_status.0.0",
-              "alcohol_category",
+              "alc_category",
               "ses_current_employment_status.0.6",
               "ses_imd",
               "qualification.0.5",
@@ -868,7 +866,7 @@ ukb_table1 <- ukb_v2 %>%
     `BMI` = bmi.0.0,
     `Smoking status` = smoke_status.0.0,
     `Alcohol drinking status` = alc_status.0.0,
-    `Alcohol category` = alcohol_category,
+    `Alcohol category` = alc_category,
     `Employment status` = ses_current_employment_status.0.6,
     `Index of multiple deprivation tertile` = ses_imd,
     `Educational qualification` = qualification.0.5,
