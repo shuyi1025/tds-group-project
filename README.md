@@ -11,7 +11,7 @@ This repository contains the data processing and modelling pipeline for analysin
 ```         
 TDS_Group8/
 ├── extraction_and_recoding/    # extraction and recoding workflow
-├── pipeline_envs/              # env files
+├── pipeline_envs/              # eenvironment files
 ├── pipeline_jobs/              # HPC job scripts
 ├── pipeline_scripts/           # main preprocessing, imputation, downstream, and Aim scripts
     ├── preprocessing
@@ -25,7 +25,7 @@ TDS_Group8/
 
 ## How to Run
 
-### 0. Load environments
+### 0. Set up environments
 
 #### Before beginning, please cd to the project directory.
 
@@ -52,7 +52,6 @@ R -e "install.packages('sharp', repos='https://cloud.r-project.org')"
 ```
 
 ``` bash
-q()
 conda deactivate
 ```
 
@@ -62,11 +61,10 @@ r4.4
 eval "$(~/miniforge3/bin/conda shell.bash hook)"
 conda activate g8-r44
 R -e "install.packages('DescTools', repos='https://cran.rstudio.com')"
-R -e "install.packages("miceRanger", repos = "https://cran.rstudio.com")"
+R -e "install.packages('miceRanger', repos='https://cran.rstudio.com')"
 ```
 
 ``` bash
-q()
 conda deactivate
 ```
 
