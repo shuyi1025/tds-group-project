@@ -168,7 +168,7 @@ for(v in env_pct_vars){
 
 ## 2) Skip logic
 
-Ensure skip logic and structural NAs are being respected after imputation - will also one hot encode all categorical skip vars
+Ensure skip logic and structural NAs are being respected after imputation 
 
 ### Smoke skip logic
 
@@ -495,7 +495,7 @@ for(thresh in thresholds){
 
 # Subset data for variables of interest
 plot_df <- ukb_train %>%
-  dplyr::select(age_recr.0.0, bmi.0.0, sbp_avg, dbp_avg, sex.0.0) %>%  # adjust variable names if needed
+  dplyr::select(age_recr.0.0, bmi.0.0, sbp_avg, dbp_avg, sex.0.0) %>%  
   dplyr::filter(!is.na(age_recr.0.0) & !is.na(bmi.0.0) & !is.na(sbp_avg) & !is.na(dbp_avg) & !is.na(sex.0.0))
 
 # Ensure Sex is factor
