@@ -43,7 +43,7 @@ Path(auc_path).mkdir(parents=True, exist_ok=True)
 
 # cv / tuning settings
 n_splits = 3
-n_iter = 3
+n_iter = 30
 max_epochs = 50
 patience = 10
 min_delta = 1e-4
