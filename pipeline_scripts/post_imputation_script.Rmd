@@ -10,21 +10,14 @@ output: html_document
 # Workflow overview:
 
 0)  Setup
-
-Part A) Exploratory analysis
-
 1)  Distribution checks
 2)  Dealing with skip logic
-3)  Table 1
-4)  Manhattan plot
-5)  External exposome correlation analysis
-
-Part B) Data finalisation
-
-6)  One hot encoding of categorical vars
-7)  Score creation
-8)  Categories
-9)  External exposome specific dataset creation
+3)  External exposome correlation analysis
+4)  One hot encoding 
+5)  Score creation
+6)  Table 1
+7)  Manhattan plot
+8)  External exposome specific dataset creation
 
 ## 0) Setup
 
@@ -53,6 +46,89 @@ dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
 
 ## 1) Distribution checks
 
+### Post-imputation distributions
+
+```{r, dist}
+
+plot_distributions <- function(df,
+                                   id_col = "eid",
+                                   output_file = "variable_distributions.pdf",
+                                   max_cat_levels = 30,
+                                   max_plot_levels = 50,
+                                   hist_bins = 30) {
+  
+  dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+  
+  vars <- setdiff(colnames(df), id_col)
+  pdf_path <- file.path(output_dir, output_file)
+  
+  pdf(pdf_path, width = 8, height = 5)
+  on.exit(dev.off(), add = TRUE)
+  
+  for (v in vars) {
+    message("Plotting: ", v)
+    
+    x <- df[[v]]
+    
+    if (all(is.na(x))) {
+      message("Skipping ", v, " because all values are NA")
+      next
+    }
+    
+    is_cat <- is.factor(x) || is.character(x) || is.logical(x)
+    n_unique <- length(unique(na.omit(x)))
+    
+    if (!is_cat && is.numeric(x) && n_unique <= max_cat_levels) {
+      is_cat <- TRUE
+    }
+    
+    if (is_cat) {
+      if (n_unique > max_plot_levels) {
+        message("Skipping ", v, " because it has ", n_unique, " levels")
+        next
+      }
+      
+      plot_df <- data.frame(plot_var = as.factor(x))
+      
+      p <- ggplot(plot_df, aes(x = plot_var)) +
+        geom_bar(fill = "grey40") +
+        coord_flip() +
+        labs(
+          title = paste0("Plotted from: ", v, " (categorical)"),
+          x = NULL,
+          y = "Count"
+        ) +
+        theme_grey()
+      
+    } else {
+      plot_df <- data.frame(plot_var = x)
+      plot_df <- plot_df[!is.na(plot_df$plot_var), , drop = FALSE]
+      
+      p <- ggplot(plot_df, aes(x = plot_var)) +
+        geom_histogram(
+          bins = hist_bins,
+          fill = "grey40",
+          color = "grey40"
+        ) +
+        labs(
+          title = paste0("Plotted from: ", v, " (numeric)"),
+          x = NULL,
+          y = "Count"
+        ) +
+        theme_grey()
+    }
+    
+    print(p)
+  }
+  
+  message("All plots saved in: ", normalizePath(pdf_path))
+}
+
+
+plot_distributions(ukb_train, id_col = "eid")
+
+```
+
 ### Check negative values
 
 Detect negative values
@@ -77,10 +153,10 @@ only_after
 # Rewrite impossible environmental percentage values
 
 env_pct_vars <- c(
-  "env_domestic_garden_pct_buffer_300m.0.0",
   "env_greenspace_pct_buffer_300m.0.0",
   "env_natural_env_perc_300.0.0",
-  "env_water_perc_300.0.0"
+  "env_water_perc_300.0.0",
+  "env_domestic_garden_pct_buffer_300m"
 )
 
 for(v in env_pct_vars){
@@ -146,7 +222,7 @@ ukb_test  <- process_smoking_vars(ukb_test)
 
 ### Diet skip logic
 
-```{r, diet}
+```{r}
 
 process_diet_none <- function(df) {
   
@@ -191,8 +267,6 @@ process_diet_none <- function(df) {
 ukb_train <- process_diet_none(ukb_train)
 ukb_test  <- process_diet_none(ukb_test)
 ```
-
-
 
 ### SES skip logic
 
@@ -252,7 +326,10 @@ skip_indicators <- function(df){
     dplyr::select(-any_of(c(
       "smoke_past_indicator",
       "smoke_current_indicator",
-      "ses_age_completed_full_time_education.0.0"
+      "ses_age_completed_full_time_education.0.0",
+      "employed",
+      "alc_freq.0.0",
+      "alc_status.0.0"
     )))
 }
 
@@ -261,352 +338,7 @@ ukb_test <- skip_indicators(ukb_test)
 
 ```
 
-## 3) Table 1
-
-```{r}
-# ---- helper functions ----
-fmt_mean_sd <- function(x, digits = 1) {
-  x <- x[!is.na(x)]
-  if (length(x) == 0) return(NA_character_)
-  paste0(round(mean(x), digits), " (", round(sd(x), digits), ")")
-}
-
-fmt_n <- function(x) {
-  sum(!is.na(x))
-}
-
-cat_table <- function(x, varname, digits = 1, include_na = FALSE) {
-  if (!include_na) {
-    tab <- table(x, useNA = "no")
-    denom <- sum(tab)
-  } else {
-    tab <- table(x, useNA = "ifany")
-    denom <- sum(tab)
-  }
-  prop <- (tab / denom) * 100
-  
-  data.frame(
-    Variable = varname,
-    Level    = names(tab),
-    Summary  = paste0(as.integer(tab), " (", round(as.numeric(prop), digits), "%)"),
-    stringsAsFactors = FALSE
-  )
-}
-
-# ---- specify variables ----
-cont_vars <- c("age_recr.0.0", "bmi.0.0", "sbp_avg")
-
-cat_vars <- c("sex.0.0",
-              "ethnicity.0.0",
-              "cvd_event",
-              "smoke_status.0.0",
-              "alc_status.0.0",
-              "ses_current_employment_status.0.6",
-              "imd",
-              "qualification.0.5")
-
-# ---- build table 1 ----
-table1_list <- list()
-
-# add overall N
-table1_list[["N_total"]] <- data.frame(
-  Variable = "Participants",
-  Level = "",
-  Summary = as.character(nrow(ukb_train)),
-  stringsAsFactors = FALSE
-)
-
-# continuous vars: Mean (SD)
-for (v in cont_vars) {
-  x <- ukb_train[[v]]
-  table1_list[[v]] <- data.frame(
-    Variable = v,
-    Level = "",
-    Summary = paste0(fmt_mean_sd(x), "; n=", fmt_n(x)),
-    stringsAsFactors = FALSE
-  )
-}
-
-# categorical vars: n (%)
-for (v in cat_vars) {
-  x <- ukb_train[[v]]
-  table1_list[[v]] <- cat_table(x, varname = v, digits = 1, include_na = FALSE)
-}
-
-table1_df <- do.call(rbind, table1_list)
-
-# view in console
-print(table1_df, row.names = FALSE)
-
-# export
-write.csv(table1_df, file.path(output_dir, "Table1_imputed.csv"), row.names = FALSE)
-```
-
-## 4) Manhattan plot
-
-```{r}
-outcome <- "cvd_event"
-covars  <- c("age_recr.0.0", "sex.0.0", "ethnicity.0.0",'bmi.0.0','sbp_avg','dbp_avg')
-stopifnot(outcome %in% names(ukb_train), all(covars %in% names(ukb_train)))
-ukb_train[[outcome]] <- as.integer(ukb_train[[outcome]])
-
-
-# Define exposome exposures
-drop_cols <- c(
-  "eid","date_lost_to_fup.0.0","date_recr.0.0","assessment_centre_location.0.0",
-  outcome, covars
-)
-
-exposome_prefix <- c("^diet_", "^emp_", "^env_", "^mh_", "^phys_", "^sed_", "^ses_", "^sleep_", "^smoke_")
-exposome_single <- c(
-  "qualification.0.5","alcohol_category"
-)
-
-exposures <- names(ukb_train)[
-  Reduce(`|`, lapply(exposome_prefix, \(p) grepl(p, names(ukb_train)))) |
-    names(ukb_train) %in% exposome_single
-]
-exposures <- setdiff(exposures, drop_cols)
-
-# Domain mapping
-
-get_domain <- function(v){
-  if (grepl("^diet_|^alcohol_category", v)) return("Diet/Alcohol")
-  if (grepl("^env_", v)) return("Environment")
-  if (grepl("^mh_", v)) return("Mental health")
-  if (grepl("^phys_|^sed_", v)) return("Physical activity")
-  if (grepl("^ses_|^emp_|^imd$|^qualification", v)) return("Socioeconomic")
-  if (grepl("^sleep_", v)) return("Sleep")
-  if (grepl("^smoke_", v)) return("Smoking")
-  "Other"
-}
-
-# One-exposure EWAS model with GLOBAL p
-
-run_one <- function(var) {
-  dat <- ukb_train[, c(outcome, covars, var), drop = FALSE]
-  if (is.character(dat[[var]])) dat[[var]] <- as.factor(dat[[var]])
-  dat <- tidyr::drop_na(dat)
-  
-  # skip small sample
-  n_used <- nrow(dat)
-  if (n_used < 200) return(NULL)
-  
-  # skip constant
-  if (length(unique(dat[[var]])) < 2) return(NULL)
-  
-  # logistic regression
-  base_fml <- as.formula(paste0(outcome, " ~ ", paste(covars, collapse = " + ")))
-  full_fml <- as.formula(paste0(outcome, " ~ ", var, " + ", paste(covars, collapse = " + ")))
-  fit0 <- try(glm(base_fml, data = dat, family = binomial()), silent = TRUE)
-  fit1 <- try(glm(full_fml, data = dat, family = binomial()), silent = TRUE)
-  if (inherits(fit0, "try-error") || inherits(fit1, "try-error")) return(NULL)
-  
-  # exposure type
-  is_fact <- is.factor(dat[[var]])
-  
-if (!is_fact) {
-  # standardise continuous exposure if not binary
-  if (length(unique(dat[[var]])) > 2) {
-    dat[[var]] <- as.numeric(scale(dat[[var]]))
-    type_now <- "numeric_sd"
-  } else {
-    type_now <- "numeric_binary"
-  }
-  
-  fit1 <- try(glm(full_fml, data = dat, family = binomial()), silent = TRUE)
-  if (inherits(fit1, "try-error")) return(NULL)
-  
-  sm <- summary(fit1)
-  if (!(var %in% rownames(sm$coefficients))) return(NULL)
-  
-  beta <- sm$coefficients[var, "Estimate"]
-  pval <- sm$coefficients[var, "Pr(>|z|)"]
-  
-  return(data.frame(
-    variable = var,
-    domain = get_domain(var),
-    type = type_now,
-    n_used = n_used,
-    beta = beta,
-    OR = exp(beta),
-    p = pval,
-    stringsAsFactors = FALSE
-  ))
-} else {
-    # factor: GLOBAL LRT p
-    lr <- anova(fit0, fit1, test = "LRT")
-    pval <- lr$`Pr(>Chi)`[2]
-    if (is.na(pval)) return(NULL)
-    
-    return(data.frame(
-      variable = var,
-      domain = get_domain(var),
-      type = "factor_global",
-      n_used = n_used,
-      beta = NA_real_,
-      OR = NA_real_,
-      p = pval,
-      stringsAsFactors = FALSE
-    ))
-  }
-}
-
-res <- lapply(exposures, run_one) %>% bind_rows()
-
-res <- res %>%
-  mutate(
-    FDR = p.adjust(p, method = "BH"),
-    neglog10p = -log10(p)
-  )
-
-write.csv(res, file.path(output_dir, "manhattan_results.csv"), row.names = FALSE)
-
-# 4a) Plot Manhattan
-
-domain_order <- c(
-  "Diet/Alcohol",
-  "Environment",
-  "Mental health",
-  "Physical activity",
-  "Socioeconomic",
-  "Sleep",
-  "Smoking",
-  "Other"
-)
-
-res2 <- res %>%
-  mutate(domain = factor(domain, levels = domain_order)) %>%
-  arrange(domain, variable) %>%
-  mutate(pos = row_number())
-
-axis_df <- res2 %>%
-  group_by(domain) %>%
-  summarise(center = (min(pos) + max(pos)) / 2, .groups = "drop")
-
-bonf_thr <- 0.05 / nrow(res2)
-
-p_manhattan <- ggplot(res2, aes(x = pos, y = neglog10p, color = domain)) +
-  geom_point(size = 1.3, alpha = 0.85) +
-  geom_hline(yintercept = -log10(bonf_thr), linetype = "dashed") +
-  scale_x_continuous(breaks = axis_df$center, labels = axis_df$domain) +
-  labs(
-    title = "Adjusted Exposome Manhattan Plot (Train)",
-    x = "Exposure domains",
-    y = expression(-log[10](p))
-  ) +
-  theme_minimal(base_size = 13) +
-  theme(
-    legend.position = "none",
-    axis.text.x = element_text(angle = 25, hjust = 1)
-  )
-
-print(p_manhattan)
-ggsave(file.path(output_dir, "manhattan_train_by_domain.png"), p_manhattan, width = 12, height = 5, dpi = 300)
-
-## 4b) Top signals effect size table
-
-# choose top variables from Manhattan results
-top_vars <- res %>%
-  arrange(p) %>%
-  slice_head(n = 10) %>%
-  pull(variable)
-
-get_or_ci_table <- function(var) {
-  dat <- ukb_train[, c(outcome, covars, var), drop = FALSE]
-  dat <- tidyr::drop_na(dat)
-  
-  if (nrow(dat) < 200) return(NULL)
-  if (length(unique(dat[[var]])) < 2) return(NULL)
-  
-  # character -> factor
-  if (is.character(dat[[var]])) dat[[var]] <- as.factor(dat[[var]])
-  
-  # numeric: standardise to per SD increase
-  if (is.numeric(dat[[var]]) && length(unique(dat[[var]])) > 2) {
-    dat[[var]] <- as.numeric(scale(dat[[var]]))
-    
-    fit <- try(glm(
-      as.formula(paste0(outcome, " ~ ", var, " + ", paste(covars, collapse = " + "))),
-      data = dat,
-      family = binomial()
-    ), silent = TRUE)
-    
-    if (inherits(fit, "try-error")) return(NULL)
-    
-    sm <- summary(fit)$coefficients
-    if (!(var %in% rownames(sm))) return(NULL)
-    
-    ci <- suppressMessages(confint.default(fit))
-    
-    data.frame(
-      Variable = var,
-      Level = "Per SD increase",
-      OR = exp(sm[var, "Estimate"]),
-      CI_low = exp(ci[var, 1]),
-      CI_high = exp(ci[var, 2]),
-      P_value = sm[var, "Pr(>|z|)"],
-      stringsAsFactors = FALSE
-    )
-    
-  } else if (is.factor(dat[[var]]) || is.logical(dat[[var]]) || (is.numeric(dat[[var]]) && length(unique(dat[[var]])) == 2)) {
-    
-    # if binary numeric, convert to factor for clearer output
-    if (is.numeric(dat[[var]]) && length(unique(dat[[var]])) == 2) {
-      dat[[var]] <- as.factor(dat[[var]])
-    }
-    
-    fit <- try(glm(
-      as.formula(paste0(outcome, " ~ ", var, " + ", paste(covars, collapse = " + "))),
-      data = dat,
-      family = binomial()
-    ), silent = TRUE)
-    
-    if (inherits(fit, "try-error")) return(NULL)
-    
-    tidy_fit <- broom::tidy(fit, conf.int = TRUE, exponentiate = TRUE)
-    
-    # keep only exposure rows, not covariates / intercept
-    out <- tidy_fit %>%
-      dplyr::filter(grepl(paste0("^", var), term)) %>%
-      dplyr::mutate(
-        Variable = var,
-        Level = sub(paste0("^", var), "", term),
-        Level = ifelse(Level == "", "Per unit increase", Level),
-        OR = estimate,
-        CI_low = conf.low,
-        CI_high = conf.high,
-        P_value = p.value
-      ) %>%
-      dplyr::select(Variable, Level, OR, CI_low, CI_high, P_value)
-    
-    if (nrow(out) == 0) return(NULL)
-    out
-    
-  } else {
-    return(NULL)
-  }
-}
-
-effect_table <- lapply(top_vars, get_or_ci_table) %>%
-  bind_rows() %>%
-  mutate(
-    `OR (95% CI)` = sprintf("%.2f (%.2f–%.2f)", OR, CI_low, CI_high),
-    P_value = sprintf("%.4f", P_value)
-  ) %>%
-  dplyr::select(Variable, Level, `OR (95% CI)`, P_value)
-
-print(effect_table, row.names = FALSE)
-
-write.csv(
-  effect_table,
-  file.path(output_dir, "top10_effect_size_table.csv"),
-  row.names = FALSE
-)
-
-```
-
-## 5) External exposome correlation analysis
+## 3) External exposome correlation analysis
 
 Completing correlation analysis of the external exposome on train dataset before edits to check "raw" correlations between vars
 
@@ -789,11 +521,145 @@ pair_plot <- ggpairs(
 
 
 # Save to file
-ggsave(file.path(output_dir, "age_bmi_sbp_dbp_pairs.png"), pair_plot, width = 10, height = 10, dpi = 300)
+ggsave(output_dir, pair_plot, width = 10, height = 10, dpi = 300)
 
 # Display plot
 pair_plot
 
+```
+#### Baseline var analysis pt 2
+
+```{r ethnicity_baseline_analysis, message=FALSE, warning=FALSE}
+
+# prepare data
+plot_df <- ukb_train %>%
+  dplyr::select(age_recr.0.0, bmi.0.0, sbp_avg, dbp_avg, sex.0.0, ethnicity.0.0) %>%
+  dplyr::filter(
+    !is.na(age_recr.0.0),
+    !is.na(bmi.0.0),
+    !is.na(sbp_avg),
+    !is.na(dbp_avg),
+    !is.na(sex.0.0),
+    !is.na(ethnicity.0.0)
+  ) %>%
+  mutate(
+    sex.0.0 = as.factor(sex.0.0),
+    ethnicity.0.0 = as.factor(ethnicity.0.0)
+  )
+
+# optional: make sex labels clearer if coded 0/1
+if (all(levels(plot_df$sex.0.0) %in% c("0", "1"))) {
+  plot_df$sex.0.0 <- factor(plot_df$sex.0.0, levels = c("0", "1"), labels = c("Female", "Male"))
+}
+
+# helper function for boxplots
+make_boxplot <- function(df, yvar, ylab, file_name) {
+  p <- ggplot(df, aes(x = ethnicity.0.0, y = .data[[yvar]])) +
+    geom_boxplot() +
+    theme_bw() +
+    labs(
+      x = "Ethnicity",
+      y = ylab,
+      title = paste(ylab, "by Ethnicity")
+    ) +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1)
+    )
+  
+  ggsave(
+    filename = file.path(output_dir, file_name),
+    plot = p,
+    width = 8,
+    height = 5,
+    dpi = 300
+  )
+  
+  p
+}
+
+# plots
+p_age <- make_boxplot(plot_df, "age_recr.0.0", "Age at recruitment", "age_by_ethnicity.png")
+p_bmi <- make_boxplot(plot_df, "bmi.0.0", "BMI", "bmi_by_ethnicity.png")
+p_sbp <- make_boxplot(plot_df, "sbp_avg", "Systolic blood pressure", "sbp_by_ethnicity.png")
+p_dbp <- make_boxplot(plot_df, "dbp_avg", "Diastolic blood pressure", "dbp_by_ethnicity.png")
+
+p_sex <- ggplot(plot_df, aes(x = ethnicity.0.0, fill = sex.0.0)) +
+  geom_bar(position = "fill") +
+  theme_bw() +
+  labs(
+    x = "Ethnicity",
+    y = "Proportion",
+    fill = "Sex",
+    title = "Sex distribution by Ethnicity"
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+ggsave(
+  filename = file.path(output_dir, "sex_by_ethnicity.png"),
+  plot = p_sex,
+  width = 8,
+  height = 5,
+  dpi = 300
+)
+
+# show plots in Rmd
+p_age
+p_bmi
+p_sbp
+p_dbp
+p_sex
+
+# tests
+kw_age <- kruskal.test(age_recr.0.0 ~ ethnicity.0.0, data = plot_df)
+kw_bmi <- kruskal.test(bmi.0.0 ~ ethnicity.0.0, data = plot_df)
+kw_sbp <- kruskal.test(sbp_avg ~ ethnicity.0.0, data = plot_df)
+kw_dbp <- kruskal.test(dbp_avg ~ ethnicity.0.0, data = plot_df)
+
+chi_sex <- chisq.test(table(plot_df$ethnicity.0.0, plot_df$sex.0.0))
+
+# save test results
+test_results <- data.frame(
+  variable = c("age_recr.0.0", "bmi.0.0", "sbp_avg", "dbp_avg", "sex.0.0"),
+  test = c("Kruskal-Wallis", "Kruskal-Wallis", "Kruskal-Wallis", "Kruskal-Wallis", "Chi-squared"),
+  statistic = c(
+    unname(kw_age$statistic),
+    unname(kw_bmi$statistic),
+    unname(kw_sbp$statistic),
+    unname(kw_dbp$statistic),
+    unname(chi_sex$statistic)
+  ),
+  p_value = c(
+    kw_age$p.value,
+    kw_bmi$p.value,
+    kw_sbp$p.value,
+    kw_dbp$p.value,
+    chi_sex$p.value
+  )
+)
+
+write.csv(
+  test_results,
+  file.path(output_dir, "ethnicity_baseline_tests.csv"),
+  row.names = FALSE
+)
+
+# optional text file with full test output
+sink(file.path(output_dir, "ethnicity_baseline_tests.txt"))
+cat("Kruskal-Wallis: Age by Ethnicity\n")
+print(kw_age)
+cat("\nKruskal-Wallis: BMI by Ethnicity\n")
+print(kw_bmi)
+cat("\nKruskal-Wallis: SBP by Ethnicity\n")
+print(kw_sbp)
+cat("\nKruskal-Wallis: DBP by Ethnicity\n")
+print(kw_dbp)
+cat("\nChi-squared: Sex by Ethnicity\n")
+print(chi_sex)
+sink()
+
+test_results
 ```
 
 #### Edit dataset to deal with high colinearity (\>=0.75)
@@ -806,9 +672,15 @@ strong_075 <- assoc_long %>%
 cat("\nAssociations ≥ 0.75\n")
 print(head(strong_075,30))
 
+ukb_train <- ukb_train%>%
+  select(-env_nox_air_pollution_2010.0.0)
+
+ukb_test <- ukb_test%>%
+  select(-env_nox_air_pollution_2010.0.0)
+
 ```
 
-## 6) One hot encoding & deterministic recoding of categorical vars
+## 4) One hot encoding & deterministic recoding of categorical vars
 
 #### Mh_activities
 
@@ -912,8 +784,64 @@ train_v1 <- mh_exclusive(train_v1)
 test_v1  <- mh_exclusive(test_v1)
 ```
 
+### Employment cats & one hot encoding
 
-## 7) Score creation
+```{r, employment}
+process_employment <- function(df) {
+  
+  emp_col <- "ses_current_employment_status.0.6"
+  
+  if (!emp_col %in% names(df)) {
+    stop("Employment column not found.")
+  }
+  
+  # Ensure character
+  emp_chr <- as.character(df[[emp_col]])
+  
+  # Collapse categories
+  employment_collapsed <- case_when(
+    emp_chr == "In paid employment or self-employed" ~ 
+      "in_paid_employment_or_self_employed",
+    
+    emp_chr == "Retired" ~ 
+      "retired",
+    
+    !is.na(emp_chr) ~ 
+      "other",
+    
+    TRUE ~ NA_character_
+  )
+  
+  df$employment_collapsed <- employment_collapsed
+  
+  # One hot encoding
+  categories <- c(
+    "in_paid_employment_or_self_employed",
+    "retired",
+    "other"
+  )
+  
+  onehot <- sapply(categories, function(cat) {
+    as.integer(df$employment_collapsed == cat)
+  })
+  
+  colnames(onehot) <- paste0("emp_", categories)
+  
+  df <- bind_cols(df, as.data.frame(onehot))
+  
+  df <- df%>%
+    dplyr::select(-employment_collapsed, -ses_current_employment_status.0.6)
+  
+  return(df)
+}
+
+train_v1 <- process_employment(train_v1)
+test_v1  <- process_employment(test_v1)
+
+```
+
+## 5) Score creation
+
 ### Diet score
 
 ```{r, diet}
@@ -1032,6 +960,7 @@ train_v1 <- process_diet(train_v1)
 test_v1  <- process_diet(test_v1)
 
 ```
+
 ### Sleep score
 
 ```{r, sleep}
@@ -1048,7 +977,7 @@ create_sleep_score <- function(df) {
   df %>%
     
     # Ensure correct types first
-    mutate(
+    dplyr::mutate(
       sleep_duration.0.0 = as.numeric(as.character(sleep_duration.0.0)),
       sleep_chronotype.0.0 = as.character(sleep_chronotype.0.0),
       sleep_insomnia.0.0 = as.character(sleep_insomnia.0.0),
@@ -1056,7 +985,7 @@ create_sleep_score <- function(df) {
       sleep_daytime_dozing.0.0 = as.character(sleep_daytime_dozing.0.0)
     ) %>%
     
-    mutate(
+    dplyr::mutate(
       
       # Sleep duration (<7 or >8 hours = unhealthy)
       sleep_duration_score = case_when(
@@ -1117,7 +1046,7 @@ create_sleep_score <- function(df) {
     ) %>%
     
     # Remove intermediate variables
-    select(
+    dplyr::select(
       -sleep_chronotype.0.0,
       -sleep_daytime_dozing.0.0,
       -sleep_duration.0.0,
@@ -1132,7 +1061,7 @@ create_sleep_score <- function(df) {
     ) %>%
     
     # Ordered factor
-    mutate(
+    dplyr::mutate(
       sleep_category = factor(
         sleep_category,
         levels = c("Healthy", "Intermediate", "Poor"),
@@ -1159,27 +1088,57 @@ Walking MET-minutes/week = 3.3 \* walking minutes \* walking days Moderate MET-m
 
 create_met_total <- function(df) {
   
-  met_vars <- c(
-    "phys_MET_walking.0.0",
-    "phys_MET_moderate_activity.0.0",
-    "phys_MET_vigorous_activity.0.0"
+  needed_vars <- c(
+    "phys_days_per_week_walked_10plus_min.0.0",
+    "phys_walk_duration.0.0",
+    "phys_days_per_week_moderate_activity_10plus_min.0.0",
+    "phys_moderate_activity_duration.0.0",
+    "phys_days_per_week_vigorous_activity_10plus_min.0.0",
+    "phys_vigorous_activity_duration.0.0"
   )
   
-  # ensure numeric
-  # df[met_vars] <- lapply(df[met_vars], function(x) as.numeric(as.character(x)))
+  missing_vars <- setdiff(needed_vars, names(df))
+  if (length(missing_vars) > 0) {
+    stop("Missing MET input variables: ", paste(missing_vars, collapse = ", "))
+  }
   
-  # truncate impossible negative values to 0
-  for (v in met_vars) {
+  # force numeric
+  df[, (needed_vars) := lapply(.SD, function(x) as.numeric(as.character(x))), .SDcols = needed_vars]
+  
+  # truncate impossible negatives to 0
+  for (v in needed_vars) {
     df[[v]] <- pmax(df[[v]], 0)
   }
   
-  # total MET
   df <- df %>%
-    mutate(
+    dplyr::mutate(
+      phys_MET_walking.0.0 =
+        3.3 * `phys_walk_duration.0.0` *
+        `phys_days_per_week_walked_10plus_min.0.0`,
+      
+      phys_MET_moderate_activity.0.0 =
+        4.0 * `phys_moderate_activity_duration.0.0` *
+        `phys_days_per_week_moderate_activity_10plus_min.0.0`,
+      
+      phys_MET_vigorous_activity.0.0 =
+        8.0 * `phys_vigorous_activity_duration.0.0` *
+        `phys_days_per_week_vigorous_activity_10plus_min.0.0`,
+      
       phys_MET_total =
         phys_MET_walking.0.0 +
         phys_MET_moderate_activity.0.0 +
         phys_MET_vigorous_activity.0.0
+    ) %>%
+    dplyr::select(
+      -phys_days_per_week_walked_10plus_min.0.0,
+      -phys_walk_duration.0.0,
+      -phys_days_per_week_moderate_activity_10plus_min.0.0,
+      -phys_moderate_activity_duration.0.0,
+      -phys_days_per_week_vigorous_activity_10plus_min.0.0,
+      -phys_vigorous_activity_duration.0.0,
+      -phys_MET_walking.0.0,
+      -phys_MET_moderate_activity.0.0,
+      -phys_MET_vigorous_activity.0.0
     )
   
   return(df)
@@ -1234,65 +1193,408 @@ train_v1 <- create_mh_symptom_score(train_v1)
 test_v1  <- create_mh_symptom_score(test_v1)
 ```
 
-## 8) Categories
 
-### Employment cats & one hot encoding
+## 6) Table 1
 
-```{r, employment}
-process_employment <- function(df) {
-  
-  emp_col <- "ses_current_employment_status.0.6"
-  
-  if (!emp_col %in% names(df)) {
-    stop("Employment column not found.")
-  }
-  
-  # Ensure character
-  emp_chr <- as.character(df[[emp_col]])
-  
-  # Collapse categories
-  employment_collapsed <- case_when(
-    emp_chr == "In paid employment or self-employed" ~ 
-      "in_paid_employment_or_self_employed",
-    
-    emp_chr == "Retired" ~ 
-      "retired",
-    
-    !is.na(emp_chr) ~ 
-      "other",
-    
-    TRUE ~ NA_character_
-  )
-  
-  df$employment_collapsed <- employment_collapsed
-  
-  # One hot encoding
-  categories <- c(
-    "in_paid_employment_or_self_employed",
-    "retired",
-    "other"
-  )
-  
-  onehot <- sapply(categories, function(cat) {
-    as.integer(df$employment_collapsed == cat)
-  })
-  
-  colnames(onehot) <- paste0("emp_", categories)
-  
-  df <- bind_cols(df, as.data.frame(onehot))
-  
-  df <- df%>%
-    dplyr::select(-employment_collapsed, -ses_current_employment_status.0.6)
-  
-  return(df)
+```{r}
+# ---- helper functions ----
+fmt_mean_sd <- function(x, digits = 1) {
+  x <- x[!is.na(x)]
+  if (length(x) == 0) return(NA_character_)
+  paste0(round(mean(x), digits), " (", round(sd(x), digits), ")")
 }
 
-train_v1 <- process_employment(train_v1)
-test_v1  <- process_employment(test_v1)
+fmt_n <- function(x) {
+  sum(!is.na(x))
+}
+
+cat_table <- function(x, varname, digits = 1, include_na = FALSE) {
+  if (!include_na) {
+    tab <- table(x, useNA = "no")
+  } else {
+    tab <- table(x, useNA = "ifany")
+  }
+  
+  if (length(tab) == 0) {
+    return(data.frame(
+      Variable = varname,
+      Level = NA_character_,
+      Summary = NA_character_,
+      stringsAsFactors = FALSE
+    ))
+  }
+  
+  denom <- sum(tab)
+  prop <- (tab / denom) * 100
+  
+  data.frame(
+    Variable = varname,
+    Level = names(tab),
+    Summary = paste0(as.integer(tab), " (", round(as.numeric(prop), digits), "%)"),
+    stringsAsFactors = FALSE
+  )
+}
+
+# ---- choose dataset ----
+df <- train_v1
+
+# ---- specify variables ----
+cont_vars <- c(
+  "age_recr.0.0", "sbp_avg", "dbp_avg", "mh_neuroticism_score.0.0",
+  "phys_MET_total", "diet_risk_score", "mh_symptom_score"
+)
+
+cat_vars <- c(
+  "sex.0.0",
+  "ethnicity.0.0",
+  "cvd_event",
+  "bmi.0.0",
+  "smoke_status.0.0",
+  "alcohol_category",
+  "ses_current_employment_status.0.6",
+  "ses_imd",
+  "qualification.0.5",
+  "phys_ipaq.0.0",
+  "sleep_category"
+)
+
+# keep only variables that actually exist
+cont_vars <- cont_vars[cont_vars %in% names(df)]
+cat_vars  <- cat_vars[cat_vars %in% names(df)]
+
+# ---- build table 1 ----
+table1_list <- list()
+
+# overall N
+table1_list[["N_total"]] <- data.frame(
+  Variable = "Participants",
+  Level = "",
+  Summary = as.character(nrow(df)),
+  stringsAsFactors = FALSE
+)
+
+# continuous vars: mean (sd)
+for (v in cont_vars) {
+  x <- df[[v]]
+  table1_list[[paste0("cont_", v)]] <- data.frame(
+    Variable = v,
+    Level = "",
+    Summary = paste0(fmt_mean_sd(x), "; n=", fmt_n(x)),
+    stringsAsFactors = FALSE
+  )
+}
+
+# categorical vars: n (%)
+for (v in cat_vars) {
+  x <- df[[v]]
+  table1_list[[paste0("cat_", v)]] <- cat_table(
+    x,
+    varname = v,
+    digits = 1,
+    include_na = FALSE
+  )
+}
+
+table1_df <- do.call(rbind, table1_list)
+rownames(table1_df) <- NULL
+
+# view in console
+print(table1_df, row.names = FALSE)
+
+# export
+write.csv(
+  table1_df,
+  file.path(output_dir, "Table1_scores.csv"),
+  row.names = FALSE
+)
+```
+
+## 7) Manhattan plot
+
+```{r}
+outcome <- "cvd_event"
+covars  <- c("age_recr.0.0", "sex.0.0", "ethnicity.0.0",'bmi.0.0','sbp_avg','dbp_avg')
+stopifnot(outcome %in% names(train_v1), all(covars %in% names(train_v1)))
+train_v1[[outcome]] <- as.integer(train_v1[[outcome]])
+
+
+# Define exposome exposures
+drop_cols <- c(
+  "eid",
+  outcome, covars
+)
+
+exposome_prefix <- c("^diet_", "^emp_", "^env_", "^mh_", "^phys_", "^sed_", "^ses_", "^sleep_", "^smoke_")
+exposome_single <- c(
+  "qualification.0.5", "alcohol_category"
+)
+
+
+
+exposures <- names(train_v1)[
+  Reduce(`|`, lapply(exposome_prefix, \(p) grepl(p, names(train_v1)))) |
+    names(train_v1) %in% exposome_single
+]
+exposures <- setdiff(exposures, drop_cols)
+
+# Domain mapping
+
+get_domain <- function(v){
+  if (grepl("^diet_|^alcohol_category", v)) return("Diet/Alcohol")
+  if (grepl("^env_", v)) return("Environment")
+  if (grepl("^mh_", v)) return("Mental health")
+  if (grepl("^phys_|^sed_", v)) return("Physical activity")
+  if (grepl("^ses_|^emp_|^qualification", v)) return("Socioeconomic")
+  if (grepl("^sleep_", v)) return("Sleep")
+  if (grepl("^smoke_", v)) return("Smoking")
+  "Other"
+}
+
+train_v1 <- as.data.frame(train_v1)
+
+# One-exposure EWAS model with GLOBAL p
+
+run_one <- function(var) {
+  cols_needed <- unique(c(outcome, covars, var))
+  dat <- as.data.frame(train_v1[, cols_needed, drop = FALSE])
+  
+  # check using colnames, not names
+  if (!var %in% colnames(dat)) {
+    message("Variable missing after subsetting: ", var)
+    return(NULL)
+  }
+  
+  x <- dat[, var, drop = TRUE]
+  
+  if (is.character(x)) {
+    dat[, var] <- as.factor(x)
+  }
+  
+  dat <- tidyr::drop_na(dat)
+  
+  n_used <- nrow(dat)
+  if (n_used < 200) return(NULL)
+  
+  x <- dat[, var, drop = TRUE]
+  if (length(unique(x)) < 2) return(NULL)
+  
+  base_fml <- as.formula(
+    paste0(outcome, " ~ ", paste(sprintf("`%s`", covars), collapse = " + "))
+  )
+  
+  full_fml <- as.formula(
+    paste0(outcome, " ~ `", var, "` + ", paste(sprintf("`%s`", covars), collapse = " + "))
+  )
+  
+  fit0 <- try(glm(base_fml, data = dat, family = binomial()), silent = TRUE)
+  fit1 <- try(glm(full_fml, data = dat, family = binomial()), silent = TRUE)
+  
+  if (inherits(fit0, "try-error") || inherits(fit1, "try-error")) return(NULL)
+  
+  is_fact <- is.factor(dat[, var, drop = TRUE])
+  
+  if (!is_fact) {
+    if (length(unique(dat[, var, drop = TRUE])) > 2) {
+      dat[, var] <- as.numeric(scale(dat[, var, drop = TRUE]))
+      type_now <- "numeric_sd"
+    } else {
+      type_now <- "numeric_binary"
+    }
+    
+    fit1 <- try(glm(full_fml, data = dat, family = binomial()), silent = TRUE)
+    if (inherits(fit1, "try-error")) return(NULL)
+    
+    sm <- summary(fit1)
+    if (!(var %in% rownames(sm$coefficients))) return(NULL)
+    
+    beta <- sm$coefficients[var, "Estimate"]
+    pval <- sm$coefficients[var, "Pr(>|z|)"]
+    
+    return(data.frame(
+      variable = var,
+      domain = get_domain(var),
+      type = type_now,
+      n_used = n_used,
+      beta = beta,
+      OR = exp(beta),
+      p = pval,
+      stringsAsFactors = FALSE
+    ))
+    
+  } else {
+    lr <- anova(fit0, fit1, test = "LRT")
+    pval <- lr$`Pr(>Chi)`[2]
+    if (is.na(pval)) return(NULL)
+    
+    return(data.frame(
+      variable = var,
+      domain = get_domain(var),
+      type = "factor_global",
+      n_used = n_used,
+      beta = NA_real_,
+      OR = NA_real_,
+      p = pval,
+      stringsAsFactors = FALSE
+    ))
+  }
+}
+
+res <- lapply(exposures, run_one) %>% bind_rows()
+
+res <- res %>%
+  mutate(
+    FDR = p.adjust(p, method = "BH"),
+    neglog10p = -log10(p)
+  )
+
+write.csv(res, file.path(output_dir, "manhattan_results.csv"), row.names = FALSE)
+
+# 4a) Plot Manhattan
+
+domain_order <- c(
+  "Diet/Alcohol",
+  "Environment",
+  "Mental health",
+  "Physical activity",
+  "Socioeconomic",
+  "Sleep",
+  "Smoking",
+  "Other"
+)
+
+res2 <- res %>%
+  mutate(domain = factor(domain, levels = domain_order)) %>%
+  arrange(domain, variable) %>%
+  mutate(pos = row_number())
+
+axis_df <- res2 %>%
+  group_by(domain) %>%
+  summarise(center = (min(pos) + max(pos)) / 2, .groups = "drop")
+
+bonf_thr <- 0.05 / nrow(res2)
+
+p_manhattan <- ggplot(res2, aes(x = pos, y = neglog10p, color = domain)) +
+  geom_point(size = 1.3, alpha = 0.85) +
+  geom_hline(yintercept = -log10(bonf_thr), linetype = "dashed") +
+  scale_x_continuous(breaks = axis_df$center, labels = axis_df$domain) +
+  labs(
+    title = "Adjusted Exposome Manhattan Plot (Train)",
+    x = "Exposure domains",
+    y = expression(-log[10](p))
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle = 25, hjust = 1)
+  )
+
+print(p_manhattan)
+ggsave(file.path(output_dir, "manhattan_train_by_domain.png"), p_manhattan, width = 12, height = 5, dpi = 300)
+
+## 4b) Top signals effect size table
+
+# choose top variables from Manhattan results
+top_vars <- res %>%
+  arrange(p) %>%
+  slice_head(n = 10) %>%
+  pull(variable)
+
+get_or_ci_table <- function(var) {
+  dat <- train_v1[, c(outcome, covars, var), drop = FALSE]
+  dat <- tidyr::drop_na(dat)
+  
+  if (nrow(dat) < 200) return(NULL)
+  if (length(unique(dat[[var]])) < 2) return(NULL)
+  
+  # character -> factor
+  if (is.character(dat[[var]])) dat[[var]] <- as.factor(dat[[var]])
+  
+  # numeric: standardise to per SD increase
+  if (is.numeric(dat[[var]]) && length(unique(dat[[var]])) > 2) {
+    dat[[var]] <- as.numeric(scale(dat[[var]]))
+    
+    fit <- try(glm(
+      as.formula(paste0(outcome, " ~ ", var, " + ", paste(covars, collapse = " + "))),
+      data = dat,
+      family = binomial()
+    ), silent = TRUE)
+    
+    if (inherits(fit, "try-error")) return(NULL)
+    
+    sm <- summary(fit)$coefficients
+    if (!(var %in% rownames(sm))) return(NULL)
+    
+    ci <- suppressMessages(confint.default(fit))
+    
+    data.frame(
+      Variable = var,
+      Level = "Per SD increase",
+      OR = exp(sm[var, "Estimate"]),
+      CI_low = exp(ci[var, 1]),
+      CI_high = exp(ci[var, 2]),
+      P_value = sm[var, "Pr(>|z|)"],
+      stringsAsFactors = FALSE
+    )
+    
+  } else if (is.factor(dat[[var]]) || is.logical(dat[[var]]) || (is.numeric(dat[[var]]) && length(unique(dat[[var]])) == 2)) {
+    
+    # if binary numeric, convert to factor for clearer output
+    if (is.numeric(dat[[var]]) && length(unique(dat[[var]])) == 2) {
+      dat[[var]] <- as.factor(dat[[var]])
+    }
+    
+    fit <- try(glm(
+      as.formula(paste0(outcome, " ~ ", var, " + ", paste(covars, collapse = " + "))),
+      data = dat,
+      family = binomial()
+    ), silent = TRUE)
+    
+    if (inherits(fit, "try-error")) return(NULL)
+    
+    tidy_fit <- broom::tidy(fit, conf.int = TRUE, exponentiate = TRUE)
+    
+    # keep only exposure rows, not covariates / intercept
+    out <- tidy_fit %>%
+      dplyr::filter(grepl(paste0("^", var), term)) %>%
+      dplyr::mutate(
+        Variable = var,
+        Level = sub(paste0("^", var), "", term),
+        Level = ifelse(Level == "", "Per unit increase", Level),
+        OR = estimate,
+        CI_low = conf.low,
+        CI_high = conf.high,
+        P_value = p.value
+      ) %>%
+      dplyr::select(Variable, Level, OR, CI_low, CI_high, P_value)
+    
+    if (nrow(out) == 0) return(NULL)
+    out
+    
+  } else {
+    return(NULL)
+  }
+}
+
+effect_table <- lapply(top_vars, get_or_ci_table) %>%
+  bind_rows() %>%
+  mutate(
+    `OR (95% CI)` = sprintf("%.2f (%.2f–%.2f)", OR, CI_low, CI_high),
+    P_value = sprintf("%.4f", P_value)
+  ) %>%
+  dplyr::select(Variable, Level, `OR (95% CI)`, P_value)
+
+print(effect_table, row.names = FALSE)
+
+write.csv(
+  effect_table,
+  file.path(output_dir, "top10_effect_size_table.csv"),
+  row.names = FALSE
+)
 
 ```
 
-### Reorder
+
+## 8) Reorder
 
 ```{r}
 reorder_cols <- function(df){
@@ -1314,15 +1616,15 @@ test_v1  <- reorder_cols(test_v1)
 
 ```{r}
 outcome <- "cvd_event"
-covars  <- c("age_recr.0.0", "sex.0.0", "ethnicity.0.0",'bmi','sbp_avg','dbp_avg')
+covars  <- c("age_recr.0.0", "sex.0.0", "ethnicity.0.0", 'bmi.0.0','sbp_avg','dbp_avg')
 drop_cols <- c(
-  "eid","date_lost_to_fup.0.0","date_recr.0.0","assessment_centre_location.0.0",
+  "eid", 
   outcome, covars
 )
 
-exposome_prefix <- c("^diet_", "^emp_", "^env_", "^mh_", "^phys_", "^sed_", "^ses_", "^sleep_", "^smoke_")
+exposome_prefix <- c("^diet_", "^emp_", "^env_", "^mh_", "^phys_", "^sed_", "^ses_", "^sleep_", "^smoke_", "^alc_")
 exposome_single <- c(
-  "qualification.0.5","alcohol_category"
+  "qualification.0.5"
 )
 
 exposures <- names(train_v1)[

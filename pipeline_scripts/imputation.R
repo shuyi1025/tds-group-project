@@ -23,7 +23,7 @@ message("Train rows: ", nrow(train_data), " | Test rows: ", nrow(test_data))
 # Identify variables to impute
 missing_rate <- sapply(ukb, function(x) mean(is.na(x)))
 pred_list <- names(missing_rate[missing_rate > 0])
-exclude_vars <- c("cvd_date", "date_death.0.0", "date_lost_to_fup.0.0")
+exclude_vars <- c("cvd_date")
 pred_list <- setdiff(pred_list, exclude_vars)
 
 pred_train <- intersect(pred_list, names(train_data))

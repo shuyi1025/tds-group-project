@@ -18,7 +18,7 @@ output:
 6)  Instance selection
 7)  Merging/dropping of variables
 8)  IMD tertiles
-9)  Alcohol & BMI cats
+9)  Alcohol cats
 10) Missingness checks
 11) Vars exclusion
 12) Table1
@@ -35,13 +35,14 @@ library(stringr)
 library(ggplot2)
 library(stringr)
 library(tidyr)
+library(tableone)
 ```
 
 Load data
 
 ```{r, data}
-ukb <- readRDS("../extraction_and_recoding/outputs/ukb_recoded.rds")
-cvd_event <- readRDS("cvd_events.rds")
+ukb <- readRDS("../extraction_and_recoding/outputs/ukb_recoded.rds") 
+cvd_event <- readRDS("cvd_events.rds") # update with ukbiobank cvd_event.rds 
 ```
 
 Generate output dir
@@ -84,7 +85,89 @@ table(ukb$cvd_event, useNA = "ifany")
 
 ## 1) Distribution checks
 
-Distribution checks are ran on the dataset before any changes. /rds/general/project/hda_25-26/live/TDS/TDS_Group8/preprocessing/distribution_check/dis_full.html - contains all the distribution checks of this dataset at baseline.
+Creates a pdf with all variable distributions checked
+
+```{r, dist}
+
+plot_distributions <- function(df,
+                                   id_col = "eid",
+                                   output_dir = "../pipeline_outputs/pre_output",
+                                   output_file = "variable_distributions.pdf",
+                                   max_cat_levels = 30,
+                                   max_plot_levels = 50,
+                                   hist_bins = 30) {
+  
+  dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+  
+  vars <- setdiff(colnames(df), id_col)
+  pdf_path <- file.path(output_dir, output_file)
+  
+  pdf(pdf_path, width = 8, height = 5)
+  on.exit(dev.off(), add = TRUE)
+  
+  for (v in vars) {
+    message("Plotting: ", v)
+    
+    x <- df[[v]]
+    
+    if (all(is.na(x))) {
+      message("Skipping ", v, " because all values are NA")
+      next
+    }
+    
+    is_cat <- is.factor(x) || is.character(x) || is.logical(x)
+    n_unique <- length(unique(na.omit(x)))
+    
+    if (!is_cat && is.numeric(x) && n_unique <= max_cat_levels) {
+      is_cat <- TRUE
+    }
+    
+    if (is_cat) {
+      if (n_unique > max_plot_levels) {
+        message("Skipping ", v, " because it has ", n_unique, " levels")
+        next
+      }
+      
+      plot_df <- data.frame(plot_var = as.factor(x))
+      
+      p <- ggplot(plot_df, aes(x = plot_var)) +
+        geom_bar(fill = "grey40") +
+        coord_flip() +
+        labs(
+          title = paste0("Plotted from: ", v, " (categorical)"),
+          x = NULL,
+          y = "Count"
+        ) +
+        theme_grey()
+      
+    } else {
+      plot_df <- data.frame(plot_var = x)
+      plot_df <- plot_df[!is.na(plot_df$plot_var), , drop = FALSE]
+      
+      p <- ggplot(plot_df, aes(x = plot_var)) +
+        geom_histogram(
+          bins = hist_bins,
+          fill = "grey40",
+          color = "grey40"
+        ) +
+        labs(
+          title = paste0("Plotted from: ", v, " (numeric)"),
+          x = NULL,
+          y = "Count"
+        ) +
+        theme_grey()
+    }
+    
+    print(p)
+  }
+  
+  message("All plots saved in: ", normalizePath(pdf_path))
+}
+
+
+plot_distributions(ukb, id_col = "eid")
+
+```
 
 ## 2) Exclusion
 
@@ -118,9 +201,9 @@ ukb_v2 <- ukb_v2 %>%
 
 table(ukb_v2$cvd_event)
 
-# drop cvd_date after washout step
+# drop cvd_date & date_recr after washout step
 ukb_v2 <- ukb_v2 %>%
-  dplyr::select(-cvd_date)
+  dplyr::select(-cvd_date, -date_recr.0.0)
 ```
 
 ## 3) PNA & IDK to NA conversion
@@ -302,8 +385,6 @@ ukb_v2 <- ukb_v2 %>%
 
 Select the latest instance for all vars
 
-*For ukbiobank need to check how instances are ordered compared with synthetic, i.e., is each col one category?*
-
 ```{r, instance}
 # only have one date of death col (both cols are the exact same)
 
@@ -352,6 +433,10 @@ ukb_v2 <- ukb_v2 %>%
     dbp_avg = rowMeans(dplyr::across(c(dbp_automated.0.0, dbp_automated.0.1)), na.rm = TRUE)
   ) %>%
   dplyr::select(-dbp_automated.0.0, -dbp_automated.0.1)
+
+# update domestic_garden_pct_buffer_300m.0.0 to start with env
+
+ukb_v2$env_domestic_garden_pct_buffer_300m <- ukb_v2$domestic_garden_pct_buffer_300m.0.0
 
 ```
 
@@ -411,7 +496,7 @@ process_imd <- function(df) {
   
   df <- df %>%
     mutate(
-      imd = imd_tertile
+      ses_imd = imd_tertile
     )
   
   df <- df%>%
@@ -426,7 +511,7 @@ ukb_v2 <- process_imd(ukb_v2)
 
 ```
 
-## 9) Alcohol and BMI cats
+## 9) Alcohol cats
 
 ```{r, cats}
 process_alcohol <- function(df) {
@@ -465,22 +550,20 @@ process_alcohol <- function(df) {
 ukb_v2 <- process_alcohol(ukb_v2)
 ```
 
-
 ## 10) Missingness checks
 
 ```{r, missingness}
 
-# Check column-wise missingness
+# column-wise missingness
 
 column_missing_rate <- sapply(ukb_v2, function(x) mean(is.na(x)))
 
 column_missing_summary <- data.frame(
-  var = names(ukb_v2),
-  column_missing_rate = column_missing_rate
+  var = names(column_missing_rate),
+  column_missing_rate = as.numeric(column_missing_rate)
 )
 
-# pull high missing vars 
-
+# variables with >50% missingness
 high_missing <- column_missing_summary %>%
   filter(column_missing_rate > 0.5) %>%
   mutate(
@@ -488,38 +571,63 @@ high_missing <- column_missing_summary %>%
   ) %>%
   arrange(desc(percent_missing))
 
+# view in R
 high_missing
-# Check row-wise missingness
 
-exclude_vars <- intersect(
-  c("cvd_date", "date_death.0.0", "date_lost_to_fup.0.0"),
-  names(ukb_v2)
+# save as csv
+write.csv(
+  high_missing,
+  file = file.path(output_dir, "vars_missing_gt_50_percent.csv"),
+  row.names = FALSE
 )
 
-# Create subset excluding those columns
-ukb_subset <- ukb_v2[, !(names(ukb_v2) %in% exclude_vars)]
+# save just variable names as txt
+writeLines(
+  high_missing$var,
+  con = file.path(output_dir, "vars_missing_gt_50_percent.txt")
+)
 
-# Row-wise missing rate
-row_missing_rate <- apply(ukb_subset, 1, function(x) mean(is.na(x)))
 
-# Optional: number of missing per row
-row_missing_n <- apply(ukb_subset, 1, function(x) sum(is.na(x)))
+# row-wise missingness
 
-# Combine into summary dataframe
+row_missing_rate <- apply(ukb_v2, 1, function(x) mean(is.na(x)))
+row_missing_n    <- apply(ukb_v2, 1, function(x) sum(is.na(x)))
+
 row_missing_summary <- data.frame(
   missing_n = row_missing_n,
   missing_rate = row_missing_rate
 )
 
-# visualising missingness
-# column summary
+
+# summaries
+
 summary(column_missing_rate)
-hist(column_missing_rate, breaks = 50)
-
-# row summary
 summary(row_missing_rate)
-hist(row_missing_rate, breaks = 50)
 
+
+# save histograms
+
+png(file.path(output_dir, "column_missingness_hist.png"), width = 1800, height = 1200, res = 200)
+hist(
+  column_missing_rate,
+  breaks = 50,
+  main = "Column-wise missingness",
+  xlab = "Missing rate"
+)
+dev.off()
+
+png(file.path(output_dir, "row_missingness_hist.png"), width = 1800, height = 1200, res = 200)
+hist(
+  row_missing_rate,
+  breaks = 50,
+  main = "Row-wise missingness",
+  xlab = "Missing rate"
+)
+dev.off()
+
+# hist
+hist(column_missing_rate, breaks = 50, main = "Column-wise missingness", xlab = "Missing rate")
+hist(row_missing_rate, breaks = 50, main = "Row-wise missingness", xlab = "Missing rate")
 ```
 
 ## 10.5)
@@ -527,12 +635,10 @@ plotting missingness of variables by domain level
 
 *need to update so it matches variables found in our current dataset - currently matches old vars*
 
-
 ```{r}
 
 # 1. Get variable names
 var_names <- names(ukb_v2)
-
 
 # 2. Assign each variable to a domain based on its prefix/name
 
@@ -554,83 +660,72 @@ domain_map <- tibble(variable = var_names) %>%
         startsWith(variable, "sleep_") |
         startsWith(variable, "smoke_") |
         startsWith(variable, "sed_") ~ "Lifestyle",
-      
+
       # Physiological
       variable %in% c("date_recr", "fvc", "fev1", "mob",
                       "assessment_centre", "date_lost_to_fup") |
         startsWith(variable, "impedence_") |
         startsWith(variable, "his_") ~ "Physiological",
-      
+
       # Environmental
-      startsWith(variable, "env_") |
-        startsWith(variable, "domestic_") |
-        startsWith(variable, "smoke_maternal_") ~ "Environmental",
+      startsWith(variable, "env_") ~ "Environmental",
       
       # Socioeconomic
-      startsWith(variable, "employment_") |
-        startsWith(variable, "ses_") |
+      startsWith(variable, "ses_") |
         startsWith(variable, "qualification") ~ "Socioeconomic",
       
       # Psychosocial
       startsWith(variable, "mh_") ~ "Psychosocial",
       
       # Baseline
-      variable %in% c("ethnicity", "age_recr") |
+      variable %in% c("ethnicity.0.0", "age_recr.0.0", "sex.0.0") |
         startsWith(variable, "sbp_") |
         startsWith(variable, "dbp_") |
-        startsWith(variable, "sex_") |
-        startsWith(variable, "bmi_") ~ "Baseline",
+        startsWith(variable, "bmi.0.0") ~ "Baseline",
       
       TRUE ~ NA_character_
     )
   )
 
-# Optional: inspect variables that were not assigned to any domain
+# Optional: inspect variables not assigned to any domain
 unassigned_vars <- domain_map %>%
   filter(is.na(domain))
 
 print(unassigned_vars)
 
-# ------------------------------------------------------------
 # 3. Calculate % missing for each variable
-# ------------------------------------------------------------
 var_missing <- tibble(
   variable = names(ukb_v2),
   pct_missing = sapply(ukb_v2, function(x) mean(is.na(x)) * 100)
 )
 
-# ------------------------------------------------------------
 # 4. Merge domain assignment with missingness values
-# ------------------------------------------------------------
 domain_missing <- domain_map %>%
   left_join(var_missing, by = "variable") %>%
   filter(!is.na(domain))
 
-# ------------------------------------------------------------
 # 5. Calculate mean % missing within each domain
-# ------------------------------------------------------------
 mean_domain_missing <- domain_missing %>%
   group_by(domain) %>%
-  summarise(mean_pct_missing = mean(pct_missing, na.rm = TRUE),
-            n_variables = n(),
-            .groups = "drop")
+  summarise(
+    mean_pct_missing = mean(pct_missing, na.rm = TRUE),
+    n_variables = n(),
+    .groups = "drop"
+  )
 
 print(mean_domain_missing)
 
-# ------------------------------------------------------------
 # 6. Order domains from highest to lowest missingness
-# ------------------------------------------------------------
 mean_domain_missing <- mean_domain_missing %>%
   arrange(desc(mean_pct_missing)) %>%
   mutate(domain = factor(domain, levels = domain))
 
-# ------------------------------------------------------------
 # 7. Plot
-# ------------------------------------------------------------
-ggplot(mean_domain_missing, aes(x = mean_pct_missing, y = domain)) +
+
+p <- ggplot(mean_domain_missing, aes(x = mean_pct_missing, y = domain)) +
   geom_col(fill = "#1f3b73", colour = "grey30") +
   labs(
-    title = "Mean missingness by Domain",
+    title = "Mean Missingness by Domain",
     x = "Mean % Missing",
     y = NULL
   ) +
@@ -639,10 +734,23 @@ ggplot(mean_domain_missing, aes(x = mean_pct_missing, y = domain)) +
     panel.grid.major.y = element_blank(),
     panel.grid.minor = element_blank()
   )
+
+p
+
+ggsave(
+  "../pipeline_outputs/pre_output/mean_missingness_by_domain.png",
+  plot = p,
+  width = 8,
+  height = 5,
+  dpi = 300
+)
+
 ```
 
 
 ## 11) Excluding vars
+
+Update this based on which vars have a missingness > 50% in ukbiobank
 
 Vars have been excluded based on their level of missingness in the UK Biobank. Vars with missingness >50% are excluded.
 
@@ -691,16 +799,19 @@ cat_table <- function(x, varname, digits = 1, include_na = FALSE) {
 }
 
 # ---- specify variables ----
-cont_vars <- c("age_recr.0.0", "bmi.0.0", "sbp_avg")
+cont_vars <- c("age_recr.0.0", "sbp_avg", "dbp_avg", "mh_neuroticism_score.0.0")
 
 cat_vars <- c("sex.0.0",
               "ethnicity.0.0",
               "cvd_event",
+              "bmi.0.0",
               "smoke_status.0.0",
               "alc_status.0.0",
+              "alcohol_category",
               "ses_current_employment_status.0.6",
-              "imd",
-              "qualification.0.5")
+              "ses_imd",
+              "qualification.0.5",
+              "phys_ipaq.0.0")
 
 # ---- build table 1 ----
 table1_list <- list()
@@ -738,8 +849,119 @@ print(table1_df, row.names = FALSE)
 # export
 write.csv(table1_df, file.path(output_dir, "Table1_baseR.csv"), row.names = FALSE)
 ```
+#### Table 1 version 2 (using tableone function)
 
-## 12) Imputation
+```{r, table1}
+
+# relable IMD tertiles to improve interpretability
+
+ukb_v2$ses_imd <- factor(
+  ukb_v2$ses_imd,
+  levels = c(1, 2, 3),
+  labels = c("Least deprived", "Middle", "Most deprived"),
+  ordered = TRUE
+)
+
+# update var names to be more interpretable
+
+ukb_table1 <- ukb_v2 %>%
+  rename(
+    `Age at recruitment, years` = age_recr.0.0,
+    `Systolic blood pressure, mmHg` = sbp_avg,
+    `Diastolic blood pressure, mmHg` = dbp_avg,
+    `Neuroticism score` = mh_neuroticism_score.0.0,
+    `Sex` = sex.0.0,
+    `Ethnicity` = ethnicity.0.0,
+    `BMI category` = bmi.0.0,
+    `Smoking status` = smoke_status.0.0,
+    `Alcohol drinking status` = alc_status.0.0,
+    `Alcohol category` = alcohol_category,
+    `Employment status` = ses_current_employment_status.0.6,
+    `Index of multiple deprivation tertile` = ses_imd,
+    `Educational qualification` = qualification.0.5,
+    `Physical activity status (IPAQ)` = phys_ipaq.0.0
+  )
+
+# make stratifying variable readable 
+ukb_table1$cvd_event <- factor(
+  ukb_table1$cvd_event,
+  levels = c(0, 1),
+  labels = c("No incident CVD", "Incident CVD")
+)
+
+# variables to include 
+cont_vars <- c(
+  "Age at recruitment, years",
+  "Systolic blood pressure, mmHg",
+  "Diastolic blood pressure, mmHg",
+  "Neuroticism score"
+)
+
+cat_vars <- c(
+  "Sex",
+  "Ethnicity",
+  "BMI",
+  "Smoking status",
+  "Alcohol drinking status",
+  "Alcohol category",
+  "Employment status",
+  "Index of multiple deprivation tertile",
+  "Educational qualification",
+  "Physical activity status (IPAQ)"
+)
+
+table1_vars <- c(cont_vars, cat_vars)
+
+# keep only variables that exist
+table1_vars <- table1_vars[table1_vars %in% names(ukb_table1)]
+cat_vars <- cat_vars[cat_vars %in% names(ukb_table1)]
+
+# create table 1 with tableone 
+table1_obj <- CreateTableOne(
+  vars = table1_vars,
+  strata = "cvd_event",
+  data = ukb_table1,
+  factorVars = cat_vars,
+  includeNA = FALSE
+)
+
+# print in console
+print(table1_obj, showAllLevels = TRUE, quote = FALSE, noSpaces = TRUE)
+
+# export as csv
+table1_df <- print(
+  table1_obj,
+  showAllLevels = TRUE,
+  quote = FALSE,
+  noSpaces = TRUE,
+  printToggle = FALSE
+)
+
+table1_df <- data.frame(
+  Variable = rownames(table1_df),
+  table1_df,
+  row.names = NULL,
+  check.names = FALSE
+)
+
+write.csv(
+  table1_df,
+  file.path(output_dir, "Table1_tableone_cvd_event.csv"),
+  row.names = FALSE
+)
+
+# optional txt export
+capture.output(
+  print(table1_obj, showAllLevels = TRUE, quote = FALSE, noSpaces = TRUE),
+  file = file.path(output_dir, "Table1_tableone_cvd_event.txt")
+)
+
+
+```
+
+
+
+## 13) Imputation
 
 For imputation, run the corresponding imputation script in `pipeline_scripts/`.
 

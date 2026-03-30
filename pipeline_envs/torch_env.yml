@@ -1,0 +1,16 @@
+name: g8-py312
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.12
+  - conda[version='>=25.11.0']
+  - mamba[version='>=2.4.0']
+  - pip
+  - numpy
+  - pandas
+  - pyreadr
+  - scikit-learn
+  - matplotlib
+  - xgboost
+  - pytorch
