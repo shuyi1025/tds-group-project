@@ -46,7 +46,7 @@ plt.show()
 # 2) Baseline + external exposome AUC ROC 
 
 # Define output directory
-output_dir = "../output"
+output_dir = "../../pipeline_outputs/aim4_output/auc_overlay"
 
 models = {
     "Logistic Regression": "logistic_baseline_ee.csv",
