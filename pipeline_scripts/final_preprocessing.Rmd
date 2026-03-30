@@ -654,18 +654,12 @@ domain_map <- tibble(variable = var_names) %>%
       startsWith(variable, "biochem_") | startsWith(variable, "blood_") ~ "Biological",
       
       # Lifestyle
-      startsWith(variable, "alc_") |
+      startsWith(variable, "alc") |
         startsWith(variable, "diet_") |
         startsWith(variable, "phys_") |
         startsWith(variable, "sleep_") |
         startsWith(variable, "smoke_") |
         startsWith(variable, "sed_") ~ "Lifestyle",
-
-      # Physiological
-      variable %in% c("date_recr", "fvc", "fev1", "mob",
-                      "assessment_centre", "date_lost_to_fup") |
-        startsWith(variable, "impedence_") |
-        startsWith(variable, "his_") ~ "Physiological",
 
       # Environmental
       startsWith(variable, "env_") ~ "Environmental",
